@@ -165,7 +165,7 @@ module tt_scoreboard_ovi(input logic       clk,
   scoreboard_entry selected_entry;
   tt_ffs #(.WIDTH(32), //Number of inputs.
           .DATA_WIDTH($bits(scoreboard_entry)))              //Width of data 
-        (.req_in(ready_to_drain),
+  tt_ffs_int (.req_in(ready_to_drain),
           .data_in(scoreboard),
           .req_sum(o_drain_load_buffer), 
           .data_out(selected_entry),
@@ -184,7 +184,7 @@ module tt_scoreboard_ovi(input logic       clk,
   scoreboard_entry completed_entry;
   tt_ffs #(.WIDTH(32),              //Number of inputs.
 		       .DATA_WIDTH($bits(scoreboard_entry)))              //Width of data 
-          (.req_in(completed_entries),
+  tt_ffs_int_2 (.req_in(completed_entries),
            .data_in(scoreboard),
            .req_sum(o_completed_valid), 
            .data_out(completed_entry),

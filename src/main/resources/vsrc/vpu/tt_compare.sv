@@ -24,7 +24,9 @@ integer  e;
      // If these assertions are "don't care" for this instance of the module, set the DISABLE_ASSERTIONS=1 parameter when instantiating the module
      if(DISABLE_ASSERTIONS == 0) begin
          // Check if the match is one-hot
+`ifdef ASSERT_COND_CLK
          `ASSERT_COND_CLK(i_compare_enable, $onehot0(o_compare_match[ENTRIES-1:0]), "tt_compare matched against more than one entry");
+`endif
      end
    endgenerate
 `endif

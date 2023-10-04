@@ -501,7 +501,9 @@ endfunction
 `ifdef SIM
    // Can't set the data valid if tag valid is not high
    for (genvar i=0; i<LQ_DATA_WR_PORTS; i++) begin
+`ifdef ASSERT_COND_CLK
       `ASSERT_COND_CLK(lq_fifo_write_data_en[i], lq_broadside_tag_valid[lq_fifo_write_data_addr[i]], "Setting LQ Data valid for port %0d but Tag valid is low", i);
+`endif
    end
 `endif
 

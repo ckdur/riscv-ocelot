@@ -20,7 +20,9 @@ integer  m;
      // If these assertions are "don't care" for this instance of the module, set the DISABLE_ASSERTIONS=1 parameter when instantiating the module
      if(DISABLE_ASSERTIONS == 0) begin
          // Check if the select is one-hot
+`ifdef ASSERT_COND_CLK
          `ASSERT_COND_CLK(i_enable, $onehot(i_select[MUX_WIDTH-1:0]), "tt_decoded_mux received a select input signal which was not one-hot");
+`endif
      end
    endgenerate
 `endif

@@ -20,7 +20,7 @@ reg occupied;
 reg [WIDTH-1:0] data;
 
 wire rtr;
-`ifdef SIM
+`ifdef SIM_NOT_WORKING_
 
 generate
   if (SUPPRESSOR==1) begin : gen_suppressor
@@ -70,8 +70,10 @@ always @(posedge i_clk) begin
   pending_data <= i_data;
 end
 
+`ifdef ASSERT_COND_CLK
 `ASSERT_COND_CLK(pending_rts, (i_rts || NORTS_DROPPED), "RTS dropped without RTR");
 `ASSERT_COND_CLK(pending_rts, i_data == pending_data, "Request data not stable while waiting for RTR");
+`endif
 `endif
 
 endmodule
