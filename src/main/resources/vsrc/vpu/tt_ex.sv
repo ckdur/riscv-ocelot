@@ -581,7 +581,9 @@ assign o_ex_bp_pc                = o_ex_branch_taken ? ex_target_pc : (ex_pc + '
 // BP predicted not taken, but it was a taken branch
 wire OLD_mis_bp_not_ex_taken = ex_disp_vld & !int_div_stall & ex_bp_predicted & ~ex_bp_taken & ( (branch_taken & ex_branch_target_rts) | ex_jalr_target_rts);
 
+`ifdef ASSERT_COND_CLK
 `ASSERT_COND_CLK(OLD_mis_bp_not_ex_taken, mis_bp_ntkn_ex_tkn,"ERROR: BP redundant term check failed MisPred = %b, OldTerm = %b", mis_bp_ntkn_ex_tkn, OLD_mis_bp_not_ex_taken);
+`endif
 `endif
 
 // reg holding_predicted;
@@ -737,7 +739,9 @@ assign csr_wr_mask =   ex_type_e & (func[1:0] == 2'b10) ? 2'b01 // Csr set instr
                      : 2'b0;
 
 `ifdef SIM
+`ifdef ASSERT_COND_CLK
 `ASSERT_COND_CLK(ex_vld, $onehot0({ex_type_e, ex_type_c1, ex_type_c2, ex_type_c3}), "csr_wr_data selects are not one-hot");
+`endif
 `endif
    
 // Derive vl from avl using instrn:rs1 or imm. Only matters for type_c1/c2/c3. Dont care in other cases
@@ -1401,7 +1405,9 @@ end
 `endif
 
 `ifdef SIM
+`ifdef ASSERT_COND_CLK
 `ASSERT_COND_CLK(o_ex_mem_payload.mem_amo, !((o_ex_mem_payload.mem_amotype == 5'b00010) || (o_ex_mem_payload.mem_amotype == 5'b00011)), "Illegal AMO instruction");
+`endif
 `endif
    
 endmodule

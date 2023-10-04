@@ -22,9 +22,11 @@ integer i;
     if(DISABLE_ASSERTIONS == 0) begin
         // Check if the encoded input signal is within the range of the output decoded signal width; 
         // If this is a true "don't care", set the DISABLE_ASSERTIONS=1 parameter when instantiating the module
+`ifdef ASSERT_COND_CLK
         `ASSERT_COND_CLK( i_enable, (i_encoded_signal[ENCODED_WIDTH-1:0] < DECODED_WIDTH), "tt_decoder received an encoded input signal value which was larger than the configured output decoded width");
         `ASSERT_COND_CLK( i_enable, $onehot(o_decoded_signal[DECODED_WIDTH-1:0]), "tt_decoder produced a decoded output signal which was not one-hot (check for xprop!)");        
-        `ASSERT_COND_CLK(~i_enable, (o_decoded_signal[DECODED_WIDTH-1:0] == {DECODED_WIDTH{1'b0}}), "tt_decoder should produce a zero output when the i_enable is not set (check for xprop!)");                
+        `ASSERT_COND_CLK(~i_enable, (o_decoded_signal[DECODED_WIDTH-1:0] == {DECODED_WIDTH{1'b0}}), "tt_decoder should produce a zero output when the i_enable is not set (check for xprop!)"); 
+`endif               
     end
   endgenerate
 `endif

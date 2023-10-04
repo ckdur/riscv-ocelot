@@ -957,10 +957,12 @@ always @(posedge i_clk) begin
   // `ASSERT_COND_NORST(OLD_id_type_u,o_id_type_u,"ERROR: Autogen EncType mismatches with Old EncType, old = %b, new = %b", OLD_id_type_u, o_id_type_u);
   // `ASSERT_COND_NORST(OLD_id_type_uj,o_id_type_uj,"ERROR: Autogen EncType mismatches with Old EncType, old = %b, new = %b", OLD_id_type_uj, o_id_type_uj);
 
+`ifdef ASSERT_COND_NORST
   `ASSERT_COND_NORST(OLD_rs1_used,rs1_used,"ERROR: Autogen rs1_used mismatches with Old rs1_used, old = %b, new = %b", OLD_rs1_used, rs1_used);
   `ASSERT_COND_NORST(OLD_rs2_used,rs2_used,"ERROR: Autogen rs2_used mismatches with Old rs2_used, old = %b, new = %b", OLD_rs2_used, rs2_used);
 
   `ASSERT_COND_NORST(OLD_rf_wr_flag,o_rf_wr_flag,"ERROR: Autogen rf_wr_flag mismatches with Old rf_wr_flag, old = %b, new = %b", OLD_rf_wr_flag, o_rf_wr_flag);
+`endif
   end
 end
 
@@ -1453,7 +1455,9 @@ tt_pipe_stage #(.WIDTH(1)) I_instdisp ( i_clk, i_reset_n, 1'b1, id_ex_instdisp, 
    ////////////////
 `ifdef SIM
    // RTS to EX, FP, and VEX is one-hot
+`ifdef ASSERT_COND_CLK
    `ASSERT_COND_CLK(id_rts, $onehot0({o_id_ex_rts, o_id_fp_ex0_rts, o_id_vex_rts}), "RTS to EX, FP, and VEX is one-hot");
+`endif
 `endif 
 
 endmodule
