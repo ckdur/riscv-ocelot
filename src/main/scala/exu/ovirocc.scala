@@ -134,19 +134,41 @@ class OviRoccWrapper(implicit p: Parameters) extends CoreModule with HasCorePara
   vpu.io.issue_valid := cmd.fire
   vpu.io.issue_inst := cmd.bits.inst.asUInt
 
+  // Credit system
   val sb_valid = RegInit(VecInit.fill(32)(false.B))
+  val sb_cmd = Reg(Vec(32, new RoCCCommand))
   val next_sb_id = PriorityEncoder(sb_valid.map(!_))
   when(cmd.fire) {
+    sb_cmd(next_sb_id) := cmd.bits
     sb_valid(next_sb_id) := true.B
   }
-  when(vpu.io.completed_valid) {
+  val resp_valid = vpu.io.completed_valid
+  val resp_cmd = sb_cmd(vpu.io.completed_sb_id)
+  when(resp_valid) {
     sb_valid(vpu.io.completed_sb_id) := false.B
   }
-
   val MAX_ISSUE_CREDIT = 16
   val issue_credit_cnt = RegInit(MAX_ISSUE_CREDIT.U)
   issue_credit_cnt := issue_credit_cnt + vpu.io.issue_credit - vpu.io.issue_valid
   val vpu_ready = issue_credit_cnt =/= 0.U
+  cmd.ready := vpu_ready
+
+  // Response to the writeback
+  // TODO: This function should't come from here. This should come from the decoder in Rocket
+  def IsVinstRd(inst: RoCCInstruction): Bool = {
+    // V_VWXUNARY0= BitPat("b010000???????????010?????1010111")
+    inst.funct(6,1) === "b010000".U && !inst.xd && inst.xs1 && !inst.xs2 && inst.opcode === "b1010111".U
+  }
+  respArb.io.in(0).valid := resp_valid && IsVinstRd(resp_cmd.inst)
+  respArb.io.in(0).bits.rd := resp_cmd.inst.rd
+  respArb.io.in(0).bits.data := vpu.io.completed_dest_reg
+  // TODO: The completed_fflags are not used in this context
+
+  // Memory phase
+  io.mem.req.valid := vpu.io.memop_sync_start
+  io.mem.req.bits.cmd := M_XRD
+
+  // VPU connections
   vpu.io.issue_sb_id := next_sb_id
   vpu.io.issue_scalar_opnd := cmd.bits.rs1
   vpu.io.issue_vcsr := Cat(
@@ -163,9 +185,6 @@ class OviRoccWrapper(implicit p: Parameters) extends CoreModule with HasCorePara
   vpu.io.dispatch_next_senior := cmd.fire
   vpu.io.dispatch_kill := 0.B
 
-  io.mem.req.valid := vpu.io.memop_sync_start
-  io.mem.req.bits.cmd := M_XRD
-
   //vpu.io.memop_sync_end := MemSyncEnd
   //vpu.io.memop_sb_id := MemSbId
   // vpu.io.mem_vstart := MEMVstart
@@ -176,7 +195,6 @@ class OviRoccWrapper(implicit p: Parameters) extends CoreModule with HasCorePara
   //vpu.io.load_mask := MemReturnMask
   //vpu.io.store_credit := MemStoreCredit
   //vpu.io.mask_idx_credit := vAGen.io.release
-  cmd.ready := vpu_ready
 }
 
 class OviRocc(opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC(opcodes) {
