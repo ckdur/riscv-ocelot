@@ -49,19 +49,16 @@ class OviAndVConfigRouter(implicit p: Parameters) extends CoreModule()(p) {
   cmd.ready := cmdReadys.reduce(_ || _)
 }
 
-class OviRocc(opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC(opcodes) {
-  override lazy val module = new OviRoccModuleImp(this)
-}
+class OviRoccWrapper(implicit p: Parameters) extends CoreModule with HasCoreParameters {
+  val io = IO(new RoCCIO(0)) // NOTE: Is zero unless you need PTW
 
-class OviRoccModuleImp(outer: OviRocc)(implicit p: Parameters) extends LazyRoCCModuleImp(outer)
-  with HasCoreParameters {
   // Ovi and Vconfig Router
   val router = Module(new OviAndVConfigRouter)
   router.io.in <> io.cmd
   val cmd = Queue(router.io.out)
   val cfgcmd = Queue(router.io.cfgout)
 
-  val respArb = Module(new RRArbiter(new RoCCResponse()(outer.p), 2))
+  val respArb = Module(new RRArbiter(new RoCCResponse()(p), 2))
   io.resp <> respArb.io.out
   respArb.io.in(0).valid := false.B
   respArb.io.in(1).valid := false.B
@@ -70,13 +67,13 @@ class OviRoccModuleImp(outer: OviRocc)(implicit p: Parameters) extends LazyRoCCM
 
   // **************** Vconfig Phase ************************
   def ZImmGen(setivli: Bool, inst: UInt): UInt = {
-    val other = 0.U((32-11).W)
+    val other = 0.U((32 - 11).W)
     val i10 = Mux(setivli, inst(30), 0.U)
     val i9_0 = inst(29, 20)
     other ## i10 ## i9_0
   }
 
-  val avl_imm = 0.U((32-5).W) ## cfgcmd.bits.rocc.inst.rs2
+  val avl_imm = 0.U((32 - 5).W) ## cfgcmd.bits.rocc.inst.rs2
   val vtype_imm = ZImmGen(cfgcmd.bits.setivli, cfgcmd.bits.rocc.inst.asUInt)
 
   val vtype_raw = Wire(UInt())
@@ -96,12 +93,14 @@ class OviRoccModuleImp(outer: OviRocc)(implicit p: Parameters) extends LazyRoCCM
   val vl = Wire(UInt())
   val vtype = VType.fromUInt(vtype_raw, false)
   // vsetvl(i) with rd=x0 and rs1=x0 doesn't update vl CSR
-  val set_vl =
+  val set_vl = Wire(Bool())
+  set_vl :=
     cfgcmd.bits.setivli ||
       cfgcmd.bits.rocc.inst.rd =/= 0.U ||
       cfgcmd.bits.rocc.inst.rs1 =/= 0.U
   // vsetvl(i) with rd!=x0 and rs1=x0 sets vl to VLMAX
-  val set_vlmax =
+  val set_vlmax = Wire(Bool())
+  set_vlmax :=
     !cfgcmd.bits.setivli ||
       cfgcmd.bits.rocc.inst.rd =/= 0.U ||
       cfgcmd.bits.rocc.inst.rs1 === 0.U
@@ -110,6 +109,8 @@ class OviRoccModuleImp(outer: OviRocc)(implicit p: Parameters) extends LazyRoCCM
   }.otherwise {
     vl := VType.computeVL(avl, vtype_raw, 0.U, 0.B, 0.B, 0.B)
   }
+  set_vl.suggestName("set_vl")
+  set_vlmax.suggestName("set_vlmax")
 
   cfgcmd.ready := true.B
   respArb.io.in(1).valid := cfgcmd.fire
@@ -176,6 +177,16 @@ class OviRoccModuleImp(outer: OviRocc)(implicit p: Parameters) extends LazyRoCCM
   //vpu.io.store_credit := MemStoreCredit
   //vpu.io.mask_idx_credit := vAGen.io.release
   cmd.ready := vpu_ready
+}
+
+class OviRocc(opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC(opcodes) {
+  override lazy val module = new OviRoccModuleImp(this)
+}
+
+class OviRoccModuleImp(outer: OviRocc)(implicit p: Parameters) extends LazyRoCCModuleImp(outer)
+  with HasCoreParameters {
+  val wrap = Module(new OviRoccWrapper)
+  io <> wrap.io
 }
 
 object VecOpcodeSet {
