@@ -507,7 +507,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     mem.MemSbId := io.cache.resp.bits.sbIdDoneLd
     MemSb := MemSb.bitSet(io.cache.resp.bits.sbIdDoneSt, true.B)
   }.elsewhen(MemSb =/= 0.U) {*/
-    MemSbResidue := true.B
+    MemSbResidue := false.B // TODO: It was true
     mem.MemSbId := PriorityEncoder(MemSb)
     MemSb := MemSb.bitSet(mem.MemSbId, false.B)
   //}
