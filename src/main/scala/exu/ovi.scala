@@ -4,16 +4,14 @@ package boom.exu
 import chisel3._
 import chisel3.util._
 import chisel3.experimental._
-
 import org.chipsalliance.cde.config.Parameters
-import freechips.rocketchip.rocket.{VConfig}
-
+import freechips.rocketchip.rocket.VConfig
 import boom.exu.FUConstants._
 import boom.common._
 import boom.exu._
 import boom.util._
-import boom.lsu.{LSUExeIO}
-
+import boom.lsu.LSUExeIO
+import freechips.rocketchip.tile.HasCoreParameters
 import hardfloat._
 
 class EnhancedFuncUnitReq(xLen: Int, vLen: Int)(implicit p: Parameters) extends Bundle {
@@ -23,8 +21,24 @@ class EnhancedFuncUnitReq(xLen: Int, vLen: Int)(implicit p: Parameters) extends 
   val req = new FuncUnitReq(xLen)
 }
 
+trait VMemLSQConsts extends HasCoreParameters {
+  val vlsiQDepth = 4
+  val oviWidth = 512
+  val outStandingLSCount = 32
+  val vpuVlen = 256
+  val vdbDepth = 4
+  val vAGenDepth = 4
+  val fakeLoadDepth = 8
+
+  val lsuDmemWidth = coreDataBits
+  val byteVreg = vpuVlen / 8
+  val byteDmem = lsuDmemWidth / 8
+  val addrBreak = log2Ceil(lsuDmemWidth / 8)
+}
+
 class OviWrapper(implicit p: Parameters) extends BoomModule
-    with freechips.rocketchip.rocket.constants.MemoryOpConstants {
+    with freechips.rocketchip.rocket.constants.MemoryOpConstants
+    with VMemLSQConsts {
   val io = IO(new Bundle {
     val req = Flipped(new DecoupledIO(new FuncUnitReq(xLen)))
     val resp = new DecoupledIO(new FuncUnitResp(xLen))
@@ -105,22 +119,6 @@ class OviWrapper(implicit p: Parameters) extends BoomModule
   val seqElOff = WireInit(0.U(6.W))   // 6
   val seqElId = WireInit(0.U(11.W))   // 11
   val seqVreg = WireInit(0.U(5.W))    // 5
-
-/*
-   Constants Definition
-*/  
-   val vlsiQDepth = 4
-   val oviWidth   = 512
-   val outStandingLSCount = 32
-   val vpuVlen = 256
-   val vdbDepth = 4
-   val vAGenDepth = 4
-   val fakeLoadDepth = 8
-
-   val lsuDmemWidth = coreDataBits
-   val byteVreg = vpuVlen / 8
-   val byteDmem = lsuDmemWidth / 8
-   val addrBreak = log2Ceil(lsuDmemWidth/8)
 
 /*
   vLSIQ start
