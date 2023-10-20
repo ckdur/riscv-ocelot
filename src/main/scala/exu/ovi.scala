@@ -27,8 +27,11 @@ trait VMemLSQConsts extends HasCoreParameters {
   val outStandingLSCount = 32
   val vpuVlen = 256
   val vdbDepth = 4
-  val vAGenDepth = 4
-  val fakeLoadDepth = 8
+  val vAGenDepth = 4 // Depth of the VAGen Queue
+  val fakeLoadDepth = 8 // Depth of the fakeLoadReturn Queue
+  val maskItemWidth = 65 // OVI's mask_idx_item
+  val maskWidth = maskItemWidth + 1 // This is the combined width of OVI's mask_idx_last_idx and mask_idx_item
+  val memSeqIdWidth = 34 // Comes from OVI load_seq_id
 
   val lsuDmemWidth = coreDataBits
   val byteVreg = vpuVlen / 8

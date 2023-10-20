@@ -88,18 +88,18 @@ class VConfigWrapper(implicit p: Parameters) extends CoreModule()(p) {
   vector.set_vstart := DontCare // TODO: This vstart is not set at all
 }
 
-class VMemLSQBundle(implicit p: Parameters) extends CoreBundle()(p) {
+class VMemLSQBundle(implicit p: Parameters) extends CoreBundle()(p) with VMemLSQConsts {
   val MemSyncStart = Input(Bool())
   val MemStoreValid = Input(Bool())
-  val MemStoreData = Input(UInt(512.W))
+  val MemStoreData = Input(UInt(oviWidth.W))
   val MemMaskValid = Input(Bool())
-  val MemMaskId = Input(UInt(66.W))
+  val MemMaskId = Input(UInt(maskWidth.W))
 
   val MemSyncEnd = Output(Bool())
   val MemSbId = Output(UInt(5.W))
   val MemLoadValid = Output(Bool())
-  val MemSeqId = Output(UInt(34.W))
-  val MemLoadData = Output(UInt(512.W))
+  val MemSeqId = Output(UInt(memSeqIdWidth.W))
+  val MemLoadData = Output(UInt(oviWidth.W))
   val MemReturnMaskValid = Output(Bool())
   val MemReturnMask = Output(UInt(64.W))
   val MemStoreCredit = Output(Bool())
@@ -206,15 +206,6 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     val vxrm = Input(UInt(2.W))
     val next_sb_id = Input(UInt(5.W)) // TODO: This is not consolidated
   })
-  val mem = io.mem
-  val cmd = io.cmd
-
-  val seqSbId = WireInit(0.U(5.W)) // 5
-  val seqElCount = WireInit(1.U(7.W)) // 7
-  val seqElOff = WireInit(0.U(6.W)) // 6
-  val seqElId = WireInit(0.U(11.W)) // 11
-  val seqVreg = WireInit(0.U(5.W)) // 5
-
   // vLSIQ start
   // in the middle of handling vector load store
   val inMiddle = RegInit(false.B)
@@ -223,7 +214,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   // this chunk is checking the number of outstanding mem_sync_start
   val outStandingReq = RegInit(0.U(log2Ceil(outStandingLSCount).W))
   val canStartAnother = WireInit(false.B)
-  val vOSud = Cat(mem.MemSyncStart, canStartAnother)
+  val vOSud = Cat(io.mem.MemSyncStart, canStartAnother)
   when(vOSud === 1.U) {
     outStandingReq := outStandingReq - 1.U
   }.elsewhen(vOSud === 2.U) {
@@ -233,10 +224,10 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   val vLSIQueue = Module(new Queue(new EnhancedCmdReq, vlsiQDepth))
   val sbIdQueue = Module(new Queue(UInt(5.W), vlsiQDepth))
 
-  val req_ctrl = Wire(new VecCtrlSigs()).decode(cmd.bits.inst.asUInt, (new VecCtrlDecode).table)
-  when(cmd.fire && (req_ctrl.is_store || req_ctrl.is_load)) {
+  val req_ctrl = Wire(new VecCtrlSigs()).decode(io.cmd.bits.inst.asUInt, (new VecCtrlDecode).table)
+  when(io.cmd.fire && (req_ctrl.is_store || req_ctrl.is_load)) {
     vLSIQueue.io.enq.valid := true.B
-    vLSIQueue.io.enq.bits.req := cmd.bits
+    vLSIQueue.io.enq.bits.req := io.cmd.bits
     vLSIQueue.io.enq.bits.ctrl := req_ctrl
     vLSIQueue.io.enq.bits.vconfig := io.vconfig
     vLSIQueue.io.enq.bits.vxrm := io.vxrm
@@ -250,7 +241,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
 
   // can only dequeue vLSIQueue when it is not in the middle of handling vector load store and
   // 1. memSyncStart 2. pop out outStanding 3. previously tried
-  vLSIQueue.io.deq.ready := !inMiddle && (outStandingReq =/= 0.U || mem.MemSyncStart || tryDeqVLSIQ)
+  vLSIQueue.io.deq.ready := !inMiddle && (outStandingReq =/= 0.U || io.mem.MemSyncStart || tryDeqVLSIQ)
   sbIdQueue.io.deq.ready := vLSIQueue.io.deq.ready
 
   when(!inMiddle) {
@@ -258,7 +249,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     when(vLSIQueue.io.deq.fire) {
       inMiddle := true.B
       // active pop failed
-    }.elsewhen((outStandingReq =/= 0.U || mem.MemSyncStart) && !vLSIQueue.io.deq.valid) {
+    }.elsewhen((outStandingReq =/= 0.U || io.mem.MemSyncStart) && !vLSIQueue.io.deq.valid) {
       tryDeqVLSIQ := true.B
       inMiddle := true.B
       // passive pop successful
@@ -271,15 +262,16 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     inMiddle := false.B
   }
 
-  // a new set has dequeued from vLSIQueue
-  val newVGenConfig = vLSIQueue.io.deq.fire
-
   //v-Helper Start
-  val vAGen = Module(new VAgen(lsuDmemWidth, 66, vAGenDepth, vpuVlen, oviWidth))
-
+  /* VAgen - Generator for vector memory transactions
+  * This VAgen contains a Queues to store masks of depth vAGenDepth (usually 4)
+  * The masks exclusivelly come from the mask_idx interface
+  *
+  * */
+  val vAGen = Module(new VAgen(lsuDmemWidth, maskWidth, vAGenDepth, vpuVlen, oviWidth))
   vAGen.io.configValid := false.B
-  vAGen.io.maskData := mem.MemMaskId
-  vAGen.io.maskValid := mem.MemMaskValid
+  vAGen.io.maskData := io.mem.MemMaskId
+  vAGen.io.maskValid := io.mem.MemMaskValid
   vAGen.io.startAddr := vLSIQueue.io.deq.bits.req.rs1
   vAGen.io.stride := vLSIQueue.io.deq.bits.req.rs2
   vAGen.io.isUnit := false.B
@@ -291,32 +283,36 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   vAGen.io.pop := false.B
   vAGen.io.initialSliceSize := 0.U
   vAGen.io.memSize := 0.U
-  mem.MemMaskCredit := vAGen.io.release
+  io.mem.MemMaskCredit := vAGen.io.release
 
-  // VDB stuff
+
+  /* VDB - Vector Data Buffer
+  * The VDB contains a Queue to store the write transactions
+  *
+  * */
   val vdb = Module(new VDB(oviWidth, lsuDmemWidth, vpuVlen, vdbDepth))
   vdb.io.writeValid := false.B
   vdb.io.pop := false.B
   vdb.io.last := false.B
   vdb.io.configValid := false.B
 
-  vdb.io.writeValid := mem.MemStoreValid
-  vdb.io.writeData := mem.MemStoreData
+  vdb.io.writeValid := io.mem.MemStoreValid
+  vdb.io.writeData := io.mem.MemStoreData
   vdb.io.sliceSize := vAGen.io.sliceSizeOut
   vdb.io.packOveride := vAGen.io.spackOveride
   vdb.io.packSkipVDB := vAGen.io.packSkipVDB
   vdb.io.packId := vAGen.io.packVDBId
-  mem.MemStoreCredit := vdb.io.release
+  io.mem.MemStoreCredit := vdb.io.release
 
-  // make sure that we have enough data
+  // To ensure we have enough data, we track the VDB availability
   val vDBcount = RegInit(0.U(log2Ceil(vdbDepth + 1).W))
-  val vDBud = Cat(mem.MemStoreValid, mem.MemStoreCredit)
-  when(vDBud === 1.U) {
+  when(!io.mem.MemStoreValid && io.mem.MemStoreCredit) {
     vDBcount := vDBcount - 1.U
-  }.elsewhen(vDBud === 2.U) {
+  }.elsewhen(io.mem.MemStoreValid && !io.mem.MemStoreCredit) {
     vDBcount := vDBcount + 1.U
   }
-  assert(vDBcount <= (vdbDepth).U)
+  val vDBAvail = WireInit(vDBcount =/= 0.U)
+  assert(vDBcount <= vdbDepth.U)
 
   val vIdGen = Module(new VIdGen(byteVreg, byteDmem))
   vIdGen.io.configValid := false.B
@@ -327,7 +323,6 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   vIdGen.io.packOveride := vAGen.io.packOveride
   vIdGen.io.packSkipVreg := vAGen.io.packSkipVreg
   vIdGen.io.packId := vAGen.io.packId
-
 
   // extra decoder for whole register / mask
   val vwhls = Module(new VWhLSDecoder(vpuVlen))
@@ -368,7 +363,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   val isUnit = instMop === 0.U
 
   // start of a new round of vector load store
-  when(newVGenConfig && !vGenEnable) {
+  when(vLSIQueue.io.deq.fire && !vGenEnable) {
     vGenEnable := true.B
     vGenHold.req := vLSIQueue.io.deq.bits.req
     vGenHold.ctrl := vLSIQueue.io.deq.bits.ctrl
@@ -438,13 +433,13 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   }
 
   // Fake load response for masked-off elements
-  val fakeLoadReturnQueue = Module(new Queue(UInt(34.W), fakeLoadDepth))
+  val fakeLoadReturnQueue = Module(new Queue(UInt(memSeqIdWidth.W), fakeLoadDepth))
   fakeLoadReturnQueue.io.enq.valid := s0l1 && (vAGen.io.popForce || vAGen.io.popForceLast)
   fakeLoadReturnQueue.io.enq.bits := Cat(sbIdHold, vAGen.io.elemCount, vAGen.io.elemOffset, 0.U((11 - log2Ceil(byteVreg + 1)).W), vIdGen.io.outID, vIdGen.io.outVD)
   fakeLoadReturnQueue.io.deq.ready := false.B
 
   // Output to LSU
-  io.cache.req.valid := vGenEnable && ((!s0l1 && ((!vlIsZero && vDBcount =/= 0.U) || vlIsZero)) || s0l1) && vAGen.io.canPop
+  io.cache.req.valid := vGenEnable && ((!s0l1 && ((!vlIsZero && vDBAvail) || vlIsZero)) || s0l1) && vAGen.io.canPop
 
   io.cache.req.bits.addr := Mux(s0l1, Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W)), vAGen.io.outAddr)
   // io.cache.req.bits.idx
@@ -494,52 +489,58 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   }
 
   // Data back to VPU
-  mem.MemSbId := 0.U
+  io.mem.MemSbId := 0.U
   val MemSb = RegInit(0.U(32.W))
   val vectorDone = WireInit(0.U(2.W))
   val MemSbResidue = WireInit(false.B)
   /*vectorDone := Cat(io.cache.resp.bits.vectorDoneLd, io.cache.resp.bits.vectorDoneSt)
   when(vectorDone === 1.U) {
-    mem.MemSbId := io.cache.resp.bits.sbIdDoneSt
+    io.mem.MemSbId := io.cache.resp.bits.sbIdDoneSt
   }.elsewhen(vectorDone === 2.U) {
-    mem.MemSbId := io.cache.resp.bits.sbIdDoneLd
+    io.mem.MemSbId := io.cache.resp.bits.sbIdDoneLd
   }.elsewhen(vectorDone === 3.U) {
-    mem.MemSbId := io.cache.resp.bits.sbIdDoneLd
+    io.mem.MemSbId := io.cache.resp.bits.sbIdDoneLd
     MemSb := MemSb.bitSet(io.cache.resp.bits.sbIdDoneSt, true.B)
   }.elsewhen(MemSb =/= 0.U) {*/
     MemSbResidue := false.B // TODO: It was true
-    mem.MemSbId := PriorityEncoder(MemSb)
-    MemSb := MemSb.bitSet(mem.MemSbId, false.B)
+    io.mem.MemSbId := PriorityEncoder(MemSb)
+    MemSb := MemSb.bitSet(io.mem.MemSbId, false.B)
   //}
-  mem.MemSyncEnd := (/*io.cache.resp.bits.vectorDone &&*/ io.cache.resp.valid) || MemSbResidue
+  io.mem.MemSyncEnd := (/*io.cache.resp.bits.vectorDone &&*/ io.cache.resp.valid) || MemSbResidue
 
 
-  mem.MemLoadValid := LSUReturnLoadValid || fakeLoadReturnQueue.io.deq.valid
-  mem.MemSeqId := Cat(seqSbId, seqElCount, seqElOff, seqElId, seqVreg)
+  // Parts of the load_seq_id / memSeqId
+  val seqSbId = WireInit(0.U(5.W)) // 5
+  val seqElCount = WireInit(1.U(7.W)) // 7
+  val seqElOff = WireInit(0.U(6.W)) // 6
+  val seqElId = WireInit(0.U(11.W)) // 11
+  val seqVreg = WireInit(0.U(5.W)) // 5
+  io.mem.MemLoadValid := LSUReturnLoadValid || fakeLoadReturnQueue.io.deq.valid
+  io.mem.MemSeqId := Cat(seqSbId, seqElCount, seqElOff, seqElId, seqVreg)
 
   when(LSUReturnLoadValid) {
-    mem.MemLoadData := LSUReturnData
+    io.mem.MemLoadData := LSUReturnData
     seqSbId := io.cache.resp.bits.tag
     seqElCount := 0.U // TODO: io.vGenIO.resp.bits.elemCount
     seqElOff := 0.U // TODO: io.vGenIO.resp.bits.elemOffset
     seqElId := 0.U // TODO: Cat(0.U(3.W), io.vGenIO.resp.bits.elemID)
     seqVreg := 0.U // TODO: io.vGenIO.resp.bits.vRegID
 
-    mem.MemReturnMaskValid := io.cache.resp.bits.mask.orR // io.cache.resp.bits.isMask
-    mem.MemReturnMask := io.cache.resp.bits.mask
+    io.mem.MemReturnMaskValid := io.cache.resp.bits.mask.orR // io.cache.resp.bits.isMask
+    io.mem.MemReturnMask := io.cache.resp.bits.mask
   }.elsewhen(fakeLoadReturnQueue.io.deq.valid) {
-    mem.MemLoadData := 0.U
+    io.mem.MemLoadData := 0.U
     seqSbId := fakeLoadReturnQueue.io.deq.bits(33, 29)
     seqElCount := fakeLoadReturnQueue.io.deq.bits(28, 22)
     seqElOff := fakeLoadReturnQueue.io.deq.bits(21, 16)
     seqElId := fakeLoadReturnQueue.io.deq.bits(15, 5)
     seqVreg := fakeLoadReturnQueue.io.deq.bits(4, 0)
-    mem.MemReturnMaskValid := true.B
-    mem.MemReturnMask := false.B
+    io.mem.MemReturnMaskValid := true.B
+    io.mem.MemReturnMask := false.B
     fakeLoadReturnQueue.io.deq.ready := true.B
   }
 
-  mem.MemMaskIdxCredit := vAGen.io.release
+  io.mem.MemMaskIdxCredit := vAGen.io.release
 }
 
 class OviRoccWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConsts {
