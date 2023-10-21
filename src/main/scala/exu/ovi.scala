@@ -24,12 +24,13 @@ class EnhancedFuncUnitReq(xLen: Int, vLen: Int)(implicit p: Parameters) extends 
 trait VMemLSQConsts extends HasCoreParameters {
   val vlsiQDepth = 4
   val oviWidth = 512
+  val oviMaskWidth = oviWidth / 8 // 64
   val outStandingLSCount = 32
   val vpuVlen = 256
   val vdbDepth = 4
   val vAGenDepth = 4 // Depth of the VAGen Queue
   val fakeLoadDepth = 8 // Depth of the fakeLoadReturn Queue
-  val maskItemWidth = 65 // OVI's mask_idx_item
+  val maskItemWidth = oviMaskWidth + 1 // OVI's mask_idx_item
   val maskWidth = maskItemWidth + 1 // This is the combined width of OVI's mask_idx_last_idx and mask_idx_item
   val memSeqIdWidth = 34 // Comes from OVI load_seq_id
 
@@ -37,6 +38,13 @@ trait VMemLSQConsts extends HasCoreParameters {
   val byteVreg = vpuVlen / 8
   val byteDmem = lsuDmemWidth / 8
   val addrBreak = log2Ceil(lsuDmemWidth / 8)
+
+  // Credit system constants
+  val MAX_ISSUE_CREDIT = 16
+  val sbIdWidth = log2Ceil(MAX_ISSUE_CREDIT + 1) // We sum one because we need to represent also the 16
+  val sbCreditSpace = 1 << sbIdWidth
+  val memSbIdWidth = sbIdWidth
+  val memSbSpace = 1 << memSbIdWidth
 }
 
 class OviWrapper(implicit p: Parameters) extends BoomModule
@@ -85,7 +93,6 @@ class OviWrapper(implicit p: Parameters) extends BoomModule
   io.debug_wb_vec_wdata := vpu.io.debug_wb_vec_wdata
   io.debug_wb_vec_wmask := vpu.io.debug_wb_vec_wmask
 
-  val MAX_ISSUE_CREDIT = 16
   val issue_credit_cnt = RegInit(MAX_ISSUE_CREDIT.U)
   issue_credit_cnt := issue_credit_cnt + vpu.io.issue_credit - vpu.io.issue_valid 
   val vpu_ready = issue_credit_cnt =/= 0.U
