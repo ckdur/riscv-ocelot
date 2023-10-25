@@ -47,10 +47,72 @@ trait VMemLSQConsts extends HasCoreParameters {
   val memSbSpace = 1 << memSbIdWidth
 }
 
-class OviWrapper(implicit p: Parameters) extends BoomModule
+class VecExeUnit(dataWidth: Int)(implicit p: Parameters)
+  extends PipelinedFunctionalUnit(
+    numStages = 3,
+    numBypassStages = 0,
+    earliestBypassStage = 0,
+    isVecExeUnit = true,
+    dataWidth = dataWidth,
+    needsFcsr = true)
     with freechips.rocketchip.rocket.constants.MemoryOpConstants
     with VMemLSQConsts {
-  val io = IO(new Bundle {
+
+  ////////////////////////////////////////////////////////////////
+
+  val req_queue = Module(new OviReqQueue(8))
+
+  req_queue.io.enq <> io.req
+  // The request pipeline takes several cycles to stall
+  io.req.ready := req_queue.io.count <= (req_queue.num_entries - 3).U
+  assert(!(req_queue.io.enq.valid && !req_queue.io.enq.ready),
+         "OviReqQueue overflow")
+
+  req_queue.io.rob_pnr_idx  := io.ovi.rob_pnr_idx
+  req_queue.io.rob_head_idx := io.ovi.rob_head_idx
+  req_queue.io.brupdate     := io.brupdate
+  req_queue.io.exception    := io.ovi.exception
+
+  ////////////////////////////////////////////////////////////////
+
+  val vec_config_unit = Module(new VecConfigUnit())
+
+  io.ovi.set_vtype := vec_config_unit.io.set_vtype
+  io.ovi.set_vl    := vec_config_unit.io.set_vl
+  
+  // Temporal wire to encapsulate the OVI wrapper io
+  val ovi_wrapper = Wire(new Bundle {
+    val io = new Bundle {
+      val req = new DecoupledIO(new FuncUnitReq(xLen))
+      val resp = new DecoupledIO(new FuncUnitResp(xLen))
+    }
+  })
+
+  ////////////////////////////////////////////////////////////////
+
+  req_queue.io.deq.nodeq()
+  vec_config_unit.io.req.noenq()
+  ovi_wrapper := DontCare
+  ovi_wrapper.io.req.noenq()
+
+  val uopc = req_queue.io.deq.bits.uop.uopc
+  when(uopc === uopVEC) {
+    ovi_wrapper.io.req     <> req_queue.io.deq
+  }.elsewhen((uopc === uopVSETVL || uopc === uopVSETVLI || uopc === uopVSETIVLI) && !ovi_wrapper.io.resp.valid) {
+    vec_config_unit.io.req <> req_queue.io.deq
+  }
+
+  when(ovi_wrapper.io.resp.valid) {
+    io.resp <> ovi_wrapper.io.resp
+    vec_config_unit.io.resp.nodeq()
+  }.otherwise {
+    io.resp <> vec_config_unit.io.resp
+    ovi_wrapper.io.resp.nodeq()
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////////
+
+  /*val io = IO(new Bundle {
     val req = Flipped(new DecoupledIO(new FuncUnitReq(xLen)))
     val resp = new DecoupledIO(new FuncUnitResp(xLen))
 
@@ -63,16 +125,16 @@ class OviWrapper(implicit p: Parameters) extends BoomModule
     val debug_wb_vec_valid = Output(Bool())
     val debug_wb_vec_wdata = Output(UInt((vLen * 8).W))
     val debug_wb_vec_wmask = Output(UInt(8.W))
-  })
+  })*/
 
-  io := DontCare
+  //io := DontCare
   val vpu = Module(new tt_vpu_ovi(vLen))
 
   val sb_uop = Reg(Vec(32, new MicroOp()))
   val sb_valid = RegInit(VecInit.fill(32)(false.B))
   val next_sb_id = PriorityEncoder(sb_valid.map(!_))
-  when(io.req.fire) {
-    sb_uop(next_sb_id) := io.req.bits.uop
+  when(ovi_wrapper.io.req.fire) {
+    sb_uop(next_sb_id) := ovi_wrapper.io.req.bits.uop
     sb_valid(next_sb_id) := true.B
   }
 
@@ -80,18 +142,18 @@ class OviWrapper(implicit p: Parameters) extends BoomModule
   val resp_uop = sb_uop(vpu.io.completed_sb_id)
   when(resp_valid) { sb_valid(vpu.io.completed_sb_id) := false.B }
 
-  io.resp.valid := resp_valid
-  io.resp.bits.data := vpu.io.completed_dest_reg
-  io.resp.bits.uop := resp_uop
-  io.resp.bits.uop.dst_rtype := Mux(resp_uop.dst_rtype === RT_VEC, RT_X, resp_uop.dst_rtype)
-  io.resp.bits.uop.uses_stq := 0.B // Trick Rob to acknowledge Vector Store
-  io.resp.bits.fflags.valid := vpu.io.completed_valid && vpu.io.completed_fflags.orR
-  io.resp.bits.fflags.bits.uop.rob_idx := io.resp.bits.uop.rob_idx
-  io.resp.bits.fflags.bits.flags := vpu.io.completed_fflags
+  ovi_wrapper.io.resp.valid := resp_valid
+  ovi_wrapper.io.resp.bits.data := vpu.io.completed_dest_reg
+  ovi_wrapper.io.resp.bits.uop := resp_uop
+  ovi_wrapper.io.resp.bits.uop.dst_rtype := Mux(resp_uop.dst_rtype === RT_VEC, RT_X, resp_uop.dst_rtype)
+  ovi_wrapper.io.resp.bits.uop.uses_stq := 0.B // Trick Rob to acknowledge Vector Store
+  ovi_wrapper.io.resp.bits.fflags.valid := vpu.io.completed_valid && vpu.io.completed_fflags.orR
+  ovi_wrapper.io.resp.bits.fflags.bits.uop.rob_idx := ovi_wrapper.io.resp.bits.uop.rob_idx
+  ovi_wrapper.io.resp.bits.fflags.bits.flags := vpu.io.completed_fflags
 
-  io.debug_wb_vec_valid := vpu.io.debug_wb_vec_valid
-  io.debug_wb_vec_wdata := vpu.io.debug_wb_vec_wdata
-  io.debug_wb_vec_wmask := vpu.io.debug_wb_vec_wmask
+  io.ovi.debug_wb_vec_valid := vpu.io.debug_wb_vec_valid
+  io.ovi.debug_wb_vec_wdata := vpu.io.debug_wb_vec_wdata
+  io.ovi.debug_wb_vec_wmask := vpu.io.debug_wb_vec_wmask
 
   val issue_credit_cnt = RegInit(MAX_ISSUE_CREDIT.U)
   issue_credit_cnt := issue_credit_cnt + vpu.io.issue_credit - vpu.io.issue_valid 
@@ -152,14 +214,14 @@ class OviWrapper(implicit p: Parameters) extends BoomModule
   val sbIdQueue = Module(new Queue(UInt(5.W), vlsiQDepth))
 
   // Dequeue a request whenever VPU and vLSIQueue are ready
-  io.req.ready := vpu_ready && vLSIQueue.io.enq.ready
+  ovi_wrapper.io.req.ready := vpu_ready && vLSIQueue.io.enq.ready
 
-  val req_uop = io.req.bits.uop
-  when(io.req.fire && (req_uop.uses_stq || req_uop.uses_ldq)) {
+  val req_uop = ovi_wrapper.io.req.bits.uop
+  when(ovi_wrapper.io.req.fire && (req_uop.uses_stq || req_uop.uses_ldq)) {
     vLSIQueue.io.enq.valid := true.B
-    vLSIQueue.io.enq.bits.req     := io.req.bits
-    vLSIQueue.io.enq.bits.vconfig := io.vconfig
-    vLSIQueue.io.enq.bits.vxrm    := io.vxrm
+    vLSIQueue.io.enq.bits.req     := ovi_wrapper.io.req.bits
+    vLSIQueue.io.enq.bits.vconfig := io.ovi.vconfig
+    vLSIQueue.io.enq.bits.vxrm    := io.ovi.vxrm
     vLSIQueue.io.enq.bits.fcsr_rm := io.fcsr_rm
 
     sbIdQueue.io.enq.enq(next_sb_id)
@@ -265,10 +327,10 @@ val vIdGen = Module (new VIdGen(byteVreg, byteDmem))
       Decode Start
   */
 
-  io.vGenIO.req.valid := false.B 
-  io.vGenIO.req.bits := DontCare
-  io.vGenIO.reqHelp.valid := false.B
-  io.vGenIO.reqHelp.bits := DontCare 
+  io.ovi.vGenIO.req.valid := false.B
+  io.ovi.vGenIO.req.bits := DontCare
+  io.ovi.vGenIO.reqHelp.valid := false.B
+  io.ovi.vGenIO.reqHelp.bits := DontCare
 
   // need to send vGenIO request
   val vGenEnable  = RegInit(false.B)
@@ -384,34 +446,34 @@ val vIdGen = Module (new VIdGen(byteVreg, byteDmem))
      Output to LSU
   */ 
 
-  io.vGenIO.req.valid := vGenEnable && ((!s0l1 && ((!vlIsZero && vDBcount =/= 0.U) || vlIsZero)) || s0l1) && vAGen.io.canPop
-  io.vGenIO.req.bits.uop := vGenHold.req.uop
-  io.vGenIO.req.bits.uop.mem_size := Mux(s0l1, addrBreak.U, vAGen.io.memSizeOut)
-  io.vGenIO.req.bits.data := Mux(s0l1, 0.U, vdb.io.outData) 
-  io.vGenIO.req.bits.last := vAGen.io.last 
-  io.vGenIO.req.bits.addr := Mux(s0l1, Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W)), vAGen.io.outAddr)
+  io.ovi.vGenIO.req.valid := vGenEnable && ((!s0l1 && ((!vlIsZero && vDBcount =/= 0.U) || vlIsZero)) || s0l1) && vAGen.io.canPop
+  io.ovi.vGenIO.req.bits.uop := vGenHold.req.uop
+  io.ovi.vGenIO.req.bits.uop.mem_size := Mux(s0l1, addrBreak.U, vAGen.io.memSizeOut)
+  io.ovi.vGenIO.req.bits.data := Mux(s0l1, 0.U, vdb.io.outData)
+  io.ovi.vGenIO.req.bits.last := vAGen.io.last
+  io.ovi.vGenIO.req.bits.addr := Mux(s0l1, Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W)), vAGen.io.outAddr)
 
-  io.vGenIO.reqHelp.bits.elemID := vIdGen.io.outID 
-  io.vGenIO.reqHelp.bits.elemOffset := vAGen.io.elemOffset
-  io.vGenIO.reqHelp.bits.elemCount := vAGen.io.elemCount  
-  io.vGenIO.reqHelp.bits.vRegID := vIdGen.io.outVD
-  io.vGenIO.reqHelp.bits.sbId   := sbIdHold
-  io.vGenIO.reqHelp.bits.strideDir := strideDirHold 
-  io.vGenIO.reqHelp.bits.isMask := vAGen.io.isMaskOut
-  io.vGenIO.reqHelp.bits.Mask := vAGen.io.currentMaskOut
-  io.vGenIO.reqHelp.bits.isFake := vAGen.io.isFake
+  io.ovi.vGenIO.reqHelp.bits.elemID := vIdGen.io.outID
+  io.ovi.vGenIO.reqHelp.bits.elemOffset := vAGen.io.elemOffset
+  io.ovi.vGenIO.reqHelp.bits.elemCount := vAGen.io.elemCount
+  io.ovi.vGenIO.reqHelp.bits.vRegID := vIdGen.io.outVD
+  io.ovi.vGenIO.reqHelp.bits.sbId   := sbIdHold
+  io.ovi.vGenIO.reqHelp.bits.strideDir := strideDirHold
+  io.ovi.vGenIO.reqHelp.bits.isMask := vAGen.io.isMaskOut
+  io.ovi.vGenIO.reqHelp.bits.Mask := vAGen.io.currentMaskOut
+  io.ovi.vGenIO.reqHelp.bits.isFake := vAGen.io.isFake
 
 /*
    FSM for V-helper
 */
 
-  when ((io.vGenIO.req.valid && io.vGenIO.req.ready) || vAGen.io.popForce) {                                                         
-    vdb.io.pop := io.vGenIO.req.bits.uop.uses_stq && !vlIsZero
+  when ((io.ovi.vGenIO.req.valid && io.ovi.vGenIO.req.ready) || vAGen.io.popForce) {
+    vdb.io.pop := io.ovi.vGenIO.req.bits.uop.uses_stq && !vlIsZero
     vAGen.io.pop := true.B 
-    vIdGen.io.pop := io.vGenIO.req.bits.uop.uses_ldq && !vlIsZero
+    vIdGen.io.pop := io.ovi.vGenIO.req.bits.uop.uses_ldq && !vlIsZero
     when (vAGen.io.last) {
       vGenEnable := false.B         
-      vdb.io.last := io.vGenIO.req.bits.uop.uses_stq && !vlIsZero
+      vdb.io.last := io.ovi.vGenIO.req.bits.uop.uses_stq && !vlIsZero
       canStartAnother := true.B 
     }
   }
@@ -422,12 +484,12 @@ val vIdGen = Module (new VIdGen(byteVreg, byteDmem))
    Parse LSU response
 */
   val LSUReturnLoadValid = WireInit(false.B)
-  LSUReturnLoadValid := io.vGenIO.resp.valid && io.vGenIO.resp.bits.s0l1  // needs fixing later if we are overlapping
+  LSUReturnLoadValid := io.ovi.vGenIO.resp.valid && io.ovi.vGenIO.resp.bits.s0l1  // needs fixing later if we are overlapping
   val LSUReturnData = WireInit(0.U(oviWidth.W))
-  when (io.vGenIO.resp.bits.strideDir){  // negative
-       LSUReturnData := Cat(io.vGenIO.resp.bits.data ((lsuDmemWidth-1), 0), 0.U((oviWidth-lsuDmemWidth).W))
+  when (io.ovi.vGenIO.resp.bits.strideDir){  // negative
+       LSUReturnData := Cat(io.ovi.vGenIO.resp.bits.data ((lsuDmemWidth-1), 0), 0.U((oviWidth-lsuDmemWidth).W))
     }.otherwise {
-      LSUReturnData := Cat(0.U, io.vGenIO.resp.bits.data ((lsuDmemWidth-1), 0))
+      LSUReturnData := Cat(0.U, io.ovi.vGenIO.resp.bits.data ((lsuDmemWidth-1), 0))
     }
 
 /*
@@ -438,20 +500,20 @@ MemSbId := 0.U
 val MemSb = RegInit(0.U(32.W))
 val vectorDone = WireInit(0.U(2.W))
 val MemSbResidue = WireInit(false.B)
-vectorDone := Cat (io.vGenIO.resp.bits.vectorDoneLd, io.vGenIO.resp.bits.vectorDoneSt)
+vectorDone := Cat (io.ovi.vGenIO.resp.bits.vectorDoneLd, io.ovi.vGenIO.resp.bits.vectorDoneSt)
 when (vectorDone === 1.U) {
-   MemSbId := io.vGenIO.resp.bits.sbIdDoneSt  
+   MemSbId := io.ovi.vGenIO.resp.bits.sbIdDoneSt
 }.elsewhen (vectorDone === 2.U) {
-   MemSbId := io.vGenIO.resp.bits.sbIdDoneLd 
+   MemSbId := io.ovi.vGenIO.resp.bits.sbIdDoneLd
 }.elsewhen (vectorDone === 3.U) {
-   MemSbId := io.vGenIO.resp.bits.sbIdDoneLd
-   MemSb := MemSb.bitSet (io.vGenIO.resp.bits.sbIdDoneSt, true.B)
+   MemSbId := io.ovi.vGenIO.resp.bits.sbIdDoneLd
+   MemSb := MemSb.bitSet (io.ovi.vGenIO.resp.bits.sbIdDoneSt, true.B)
 }.elsewhen (MemSb =/= 0.U) {
    MemSbResidue := true.B 
    MemSbId := PriorityEncoder (MemSb)
    MemSb := MemSb.bitSet (MemSbId, false.B)
 }
-MemSyncEnd := (io.vGenIO.resp.bits.vectorDone && io.vGenIO.resp.valid) || MemSbResidue
+MemSyncEnd := (io.ovi.vGenIO.resp.bits.vectorDone && io.ovi.vGenIO.resp.valid) || MemSbResidue
 
   
 
@@ -460,14 +522,14 @@ MemSyncEnd := (io.vGenIO.resp.bits.vectorDone && io.vGenIO.resp.valid) || MemSbR
 
   when (LSUReturnLoadValid) {
     MemLoadData := LSUReturnData    
-    seqSbId := io.vGenIO.resp.bits.sbId
-    seqElCount := io.vGenIO.resp.bits.elemCount
-    seqElOff := io.vGenIO.resp.bits.elemOffset
-    seqElId := Cat(0.U(3.W), io.vGenIO.resp.bits.elemID)
-    seqVreg := io.vGenIO.resp.bits.vRegID
+    seqSbId := io.ovi.vGenIO.resp.bits.sbId
+    seqElCount := io.ovi.vGenIO.resp.bits.elemCount
+    seqElOff := io.ovi.vGenIO.resp.bits.elemOffset
+    seqElId := Cat(0.U(3.W), io.ovi.vGenIO.resp.bits.elemID)
+    seqVreg := io.ovi.vGenIO.resp.bits.vRegID
     
-    MemReturnMaskValid := io.vGenIO.resp.bits.isMask
-    MemReturnMask := io.vGenIO.resp.bits.Mask
+    MemReturnMaskValid := io.ovi.vGenIO.resp.bits.isMask
+    MemReturnMask := io.ovi.vGenIO.resp.bits.Mask
   }.elsewhen (fakeLoadReturnQueue.io.deq.valid) {    
     MemLoadData := 0.U     
     seqSbId := fakeLoadReturnQueue.io.deq.bits (33, 29)
@@ -487,30 +549,30 @@ MemSyncEnd := (io.vGenIO.resp.bits.vectorDone && io.vGenIO.resp.valid) || MemSbR
   vpu.io := DontCare
   vpu.io.clk := clock
   vpu.io.reset_n := ~reset.asBool
-  vpu.io.issue_valid := io.req.fire
-  vpu.io.issue_inst := io.req.bits.uop.inst
+  vpu.io.issue_valid := ovi_wrapper.io.req.fire
+  vpu.io.issue_inst := ovi_wrapper.io.req.bits.uop.inst
   vpu.io.issue_sb_id := next_sb_id
   vpu.io.issue_scalar_opnd := Mux(
-    io.req.bits.uop.lrs1_rtype === RT_FLT,
-    io.req.bits.rs3_data,
+    ovi_wrapper.io.req.bits.uop.lrs1_rtype === RT_FLT,
+    ovi_wrapper.io.req.bits.rs3_data,
     Mux(
-      io.req.bits.uop.uses_ldq || io.req.bits.uop.uses_stq,
-      io.req.bits.rs2_data,
-      io.req.bits.rs1_data
+      ovi_wrapper.io.req.bits.uop.uses_ldq || ovi_wrapper.io.req.bits.uop.uses_stq,
+      ovi_wrapper.io.req.bits.rs2_data,
+      ovi_wrapper.io.req.bits.rs1_data
     )
   )
   vpu.io.issue_vcsr := Cat(
     0.U(1.W), // vill
-    io.vconfig.vtype.vsew, // vsew
-    io.vconfig.vtype.vlmul_mag, // vlmul
+    io.ovi.vconfig.vtype.vsew, // vsew
+    io.ovi.vconfig.vtype.vlmul_mag, // vlmul
     io.fcsr_rm, // frm
-    io.vxrm, // vxrm
-    Cat(0.U((15-log2Ceil(vLen+1)).W), io.vconfig.vl), // vl
+    io.ovi.vxrm, // vxrm
+    Cat(0.U((15-log2Ceil(vLen+1)).W), io.ovi.vconfig.vl), // vl
     0.U(14.W) // vstart
   )
-  vpu.io.issue_vcsr_lmulb2 := io.vconfig.vtype.vlmul_sign
+  vpu.io.issue_vcsr_lmulb2 := io.ovi.vconfig.vtype.vlmul_sign
   vpu.io.dispatch_sb_id := next_sb_id
-  vpu.io.dispatch_next_senior := io.req.fire
+  vpu.io.dispatch_next_senior := ovi_wrapper.io.req.fire
   vpu.io.dispatch_kill := 0.B
   
    vpu.io.memop_sync_end := MemSyncEnd

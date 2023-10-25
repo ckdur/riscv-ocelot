@@ -640,7 +640,7 @@ class IntToFPUnit(latency: Int)(implicit p: Parameters)
  *
  * @param dataWidth width of the data being operated on in the functional unit
  */
-class VecExeUnit(dataWidth: Int)(implicit p: Parameters)
+/*class VecExeUnit(dataWidth: Int)(implicit p: Parameters)
   extends PipelinedFunctionalUnit(
     numStages = 3,
     numBypassStages = 0,
@@ -649,14 +649,75 @@ class VecExeUnit(dataWidth: Int)(implicit p: Parameters)
     dataWidth = dataWidth,
     needsFcsr = true)
 {
-  val sv_pipeline = Module(new OviWrapperWrapper())
+  //val sv_pipeline = Module(new OviWrapperWrapper())
 
-  sv_pipeline.io.fcsr_rm  <> io.fcsr_rm
-  sv_pipeline.io.req      <> io.req
-  sv_pipeline.io.resp     <> io.resp
-  sv_pipeline.io.core     <> io.ovi
-  sv_pipeline.io.brupdate <> io.brupdate
-}
+  ////////////////////////////////////////////////////////////////
+
+  val req_queue = Module(new OviReqQueue(8))
+
+  req_queue.io.enq <> io.req
+  // The request pipeline takes several cycles to stall
+  io.req.ready := req_queue.io.count <= (req_queue.num_entries - 3).U
+  assert(!(req_queue.io.enq.valid && !req_queue.io.enq.ready),
+         "OviReqQueue overflow")
+
+  req_queue.io.rob_pnr_idx  := io.ovi.rob_pnr_idx
+  req_queue.io.rob_head_idx := io.ovi.rob_head_idx
+  req_queue.io.brupdate     := io.brupdate
+  req_queue.io.exception    := io.ovi.exception
+
+  ////////////////////////////////////////////////////////////////
+
+  val vec_config_unit = Module(new VecConfigUnit())
+
+  io.ovi.set_vtype := vec_config_unit.io.set_vtype
+  io.ovi.set_vl    := vec_config_unit.io.set_vl
+
+  ////////////////////////////////////////////////////////////////
+
+  val ovi_wrapper = Module(new OviWrapper())
+
+  ovi_wrapper.io.vconfig <> io.ovi.vconfig
+  ovi_wrapper.io.vxrm    <> io.ovi.vxrm
+  ovi_wrapper.io.fcsr_rm <> io.fcsr_rm
+
+  ovi_wrapper.io.vGenIO <> io.ovi.vGenIO
+
+  ovi_wrapper.io.debug_wb_vec_valid <> io.ovi.debug_wb_vec_valid
+  ovi_wrapper.io.debug_wb_vec_wdata <> io.ovi.debug_wb_vec_wdata
+  ovi_wrapper.io.debug_wb_vec_wmask <> io.ovi.debug_wb_vec_wmask
+
+  ////////////////////////////////////////////////////////////////
+
+  req_queue.io.deq.nodeq()
+  vec_config_unit.io.req.noenq()
+  ovi_wrapper.io.req.noenq()
+
+  val uopc = req_queue.io.deq.bits.uop.uopc
+  when(uopc === uopVEC) {
+    ovi_wrapper.io.req     <> req_queue.io.deq
+  }.elsewhen((uopc === uopVSETVL || uopc === uopVSETVLI || uopc === uopVSETIVLI) && !ovi_wrapper.io.resp.valid) {
+    vec_config_unit.io.req <> req_queue.io.deq
+  }
+
+  when(ovi_wrapper.io.resp.valid) {
+    io.resp <> ovi_wrapper.io.resp
+    vec_config_unit.io.resp.nodeq()
+  }.otherwise {
+    io.resp <> vec_config_unit.io.resp
+    ovi_wrapper.io.resp.nodeq()
+  }
+
+  ////////////////////////////////////////////////////////////////
+
+  io.ovi.set_vxsat := DontCare
+
+  //sv_pipeline.io.fcsr_rm  <> io.fcsr_rm
+  //sv_pipeline.io.req      <> io.req
+  //sv_pipeline.io.resp     <> io.resp
+  //sv_pipeline.io.core     <> io.ovi
+  //sv_pipeline.io.brupdate <> io.brupdate
+}*/
 
 /**
  * Iterative/unpipelined functional unit, can only hold a single MicroOp at a time
