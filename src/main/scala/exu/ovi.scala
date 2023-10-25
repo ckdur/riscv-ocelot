@@ -47,7 +47,7 @@ trait VMemLSQConsts extends HasCoreParameters {
   val memSbSpace = 1 << memSbIdWidth
 }
 
-class VecExeUnit(dataWidth: Int)(implicit p: Parameters)
+class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   extends PipelinedFunctionalUnit(
     numStages = 3,
     numBypassStages = 0,
@@ -112,22 +112,6 @@ class VecExeUnit(dataWidth: Int)(implicit p: Parameters)
 
   ////////////////////////////////////////////////////////////////////////////////////
 
-  /*val io = IO(new Bundle {
-    val req = Flipped(new DecoupledIO(new FuncUnitReq(xLen)))
-    val resp = new DecoupledIO(new FuncUnitResp(xLen))
-
-    val vconfig = Input(new VConfig())
-    val vxrm    = Input(UInt(2.W))
-    val fcsr_rm = Input(UInt(3.W))
-
-    val vGenIO = Flipped(new boom.lsu.VGenIO)
-
-    val debug_wb_vec_valid = Output(Bool())
-    val debug_wb_vec_wdata = Output(UInt((vLen * 8).W))
-    val debug_wb_vec_wmask = Output(UInt(8.W))
-  })*/
-
-  //io := DontCare
   val vpu = Module(new tt_vpu_ovi(vLen))
 
   val sb_uop = Reg(Vec(32, new MicroOp()))

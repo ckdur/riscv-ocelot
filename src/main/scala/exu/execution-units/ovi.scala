@@ -1,11 +1,15 @@
 // See LICENSE.TT for license details.
 package boom.exu
 
+import scala.collection.mutable.{ArrayBuffer}
+
 import chisel3._
 import chisel3.util._
 
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.rocket.{VConfig, VType}
+import freechips.rocketchip.tile
+import FUConstants._
 
 import boom.common._
 import boom.util._
@@ -167,3 +171,45 @@ class OviWrapperCoreIO(implicit p: Parameters) extends BoomBundle
   val set_vxsat = Output(Bool())
 }
 
+class VecExeUnit(implicit p: Parameters)
+  extends ExecutionUnit(
+    readsIrf         = true,
+    writesIrf        = true,
+    writesLlFrf      = p(tile.TileKey).core.fpu.isDefined,
+    numBypassStages  = 0,
+    dataWidth        = p(tile.XLen) + 1,
+    hasVecExe        = true)
+  with freechips.rocketchip.rocket.constants.MemoryOpConstants
+  with tile.HasFPUParameters {
+
+  val out_str =
+    BoomCoreStringPrefix("==ExeUnit==") +
+    BoomCoreStringPrefix(" - VecExe")
+
+  override def toString: String = out_str.toString
+
+  // The Functional Units --------------------
+  val vecexe = Module(new VecFuncUnit(dataWidth))
+  vecexe.io.fcsr_rm           := io.fcsr_rm
+  vecexe.io.req               <> io.req
+  vecexe.io.req.valid         := io.req.valid && io.req.bits.uop.fu_code_is(FU_VEC)
+  vecexe.io.req.bits.rs3_data := ieee(io.req.bits.rs3_data) // FP
+  vecexe.io.resp.ready        := DontCare
+  vecexe.io.ovi               <> io.ovi
+  vecexe.io.brupdate          <> io.brupdate
+
+  io.fu_types := Mux(vecexe.io.req.ready && hasVecExe.B, FU_VEC, 0.U)
+
+  io.ll_fresp.valid       := vecexe.io.resp.valid && (vecexe.io.resp.bits.uop.dst_rtype === RT_FLT)
+  io.ll_fresp.bits.uop    := vecexe.io.resp.bits.uop
+  io.ll_fresp.bits.data   := vecexe.io.resp.bits.data
+  io.ll_fresp.bits.fflags := DontCare
+
+  // Outputs (Write Port #0)  ---------------
+  io.iresp.valid := vecexe.io.resp.valid && vecexe.io.resp.bits.uop.dst_rtype =/= RT_FLT
+  io.iresp.bits.uop := vecexe.io.resp.bits.uop
+  io.iresp.bits.data := vecexe.io.resp.bits.data
+  io.iresp.bits.predicated := vecexe.io.resp.bits.predicated
+  io.iresp.bits.fflags.valid := vecexe.io.resp.bits.fflags.valid
+  io.iresp.bits.fflags.bits := vecexe.io.resp.bits.fflags.bits
+}

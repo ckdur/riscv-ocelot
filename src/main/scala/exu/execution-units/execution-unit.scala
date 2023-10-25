@@ -411,7 +411,7 @@ class ALUExeUnit(
   // Vector Execution Unit --------------------------
   var vecexe: VecExeUnit = null
   if (hasVecExe) {
-    val vecexe = Module(new VecExeUnit(dataWidth))
+    val vecexe = Module(new VecFuncUnit(dataWidth))
     vecexe.io.fcsr_rm           := io.fcsr_rm
     vecexe.io.req               <> io.req
     vecexe.io.req.valid         := io.req.valid && io.req.bits.uop.fu_code_is(FU_VEC)
