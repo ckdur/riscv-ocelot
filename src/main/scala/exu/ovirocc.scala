@@ -361,7 +361,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   class vGenHoldData extends Bundle {
     val cmd = new EnhancedCmdReq            // holding the cmd from vLSIQueue
     val sbId = UInt(sbIdWidth.W)            // holding the sbId from sbIdQueue(vLSIQueue)
-    val is_load = Bool()                     // holding wheter it is store or load
+    val is_load = Bool()                    // holding wheter it is store or load
     val strideDir = Bool()                  // holding the direction of the stride, only useful for strided
     val vlIsZero = Bool()
   }
@@ -437,23 +437,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   val currentmasks = WireInit(VecInit(Seq.tabulate(nummaskelem)(i => vAGen.io.currentMaskOut((i+1) * nummaskelem - 1, i * nummaskelem))))
   val currentmask = currentmasks(addrlsb)
 
-  // Output to LSU
-  val write_legal = !vGenHold.is_load && ((!vGenHold.vlIsZero && vDBAvail) || vGenHold.vlIsZero)
-  io.cache.req.valid := vGenEnable && (write_legal || vGenHold.is_load) && vAGen.io.canPop
-
-  io.cache.req.bits.addr := Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W))
-  // io.cache.req.bits.idx
-  io.cache.req.bits.tag := /*vGenHold.sbId ## */vIdGen.io.outID  // NOTE: This one helps to keep it unique, and the sbId is ignored
-  io.cache.req.bits.cmd := vGenHold.cmd.ctrl.mem_cmd
-  io.cache.req.bits.size := Mux(vGenHold.is_load, addrBreak.U, vAGen.io.memSizeOut) // TODO: Possibly wrong
-  io.cache.req.bits.signed := false.B
-  io.cache.req.bits.dprv := vGenHold.cmd.req.status.dprv
-  io.cache.req.bits.dv := vGenHold.cmd.req.status.dv
-  io.cache.req.bits.data := Mux(vGenHold.is_load, 0.U, vdb.io.outData) // NOTE: We do not necesarly need this mux
-  io.cache.req.bits.mask := currentmask
-  io.cache.req.bits.phys := false.B
-
-  // Holding the extra bits response that were supposed to be returned by the LSU
+  // Helper to do the tag, similar to the credit system
   class RespHoldData extends Bundle {
     // These were supposed to be returned back by the LSU, but here we are holding them
     val elemCount = UInt(7.W)
@@ -467,7 +451,10 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     val sbId = UInt(5.W)
   }
   val resp_hold = Reg(Vec(1 << coreParams.dcacheReqTagBits, new RespHoldData))
+  val tag_valid = RegInit(VecInit.fill(1 << coreParams.dcacheReqTagBits)(false.B))
+  io.cache.req.bits.tag := PriorityEncoder(tag_valid.map(!_))
   when(io.cache.req.fire) {
+    tag_valid(io.cache.req.bits.tag) := true.B
     resp_hold(io.cache.req.bits.tag).last := vAGen.io.last
     resp_hold(io.cache.req.bits.tag).elemID := vIdGen.io.outID
     resp_hold(io.cache.req.bits.tag).elemOffset := vAGen.io.elemOffset
@@ -478,6 +465,27 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     resp_hold(io.cache.req.bits.tag).isMask := vAGen.io.isMaskOut
     resp_hold(io.cache.req.bits.tag).sbId := vGenHold.sbId
   }
+  when(io.cache.resp.fire) {
+    tag_valid(io.cache.resp.bits.tag) := false.B
+  }
+  val tag_cnt = RegInit((1 << coreParams.dcacheReqTagBits).U)
+  tag_cnt := tag_cnt + io.cache.resp.fire - io.cache.req.fire
+  val avail_tag = tag_cnt =/= 0.U
+
+  // Output to LSU
+  val write_legal = !vGenHold.is_load && ((!vGenHold.vlIsZero && vDBAvail) || vGenHold.vlIsZero)
+  io.cache.req.valid := vGenEnable && (write_legal || vGenHold.is_load) && vAGen.io.canPop && avail_tag
+
+  io.cache.req.bits.addr := Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W))
+  // io.cache.req.bits.idx
+  io.cache.req.bits.cmd := vGenHold.cmd.ctrl.mem_cmd
+  io.cache.req.bits.size := Mux(vGenHold.is_load, addrBreak.U, vAGen.io.memSizeOut) // TODO: Possibly wrong
+  io.cache.req.bits.signed := false.B
+  io.cache.req.bits.dprv := vGenHold.cmd.req.status.dprv
+  io.cache.req.bits.dv := vGenHold.cmd.req.status.dv
+  io.cache.req.bits.data := Mux(vGenHold.is_load, 0.U, vdb.io.outData) // NOTE: We do not necesarly need this mux
+  io.cache.req.bits.mask := currentmask
+  io.cache.req.bits.phys := false.B
   // io.cache.req.bits.no_alloc
   // io.cache.req.bits.no_xcpt
   /* NOTES about vAGen.io.currentMaskOut
@@ -510,8 +518,9 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   }
 
   // Data back to VPU
-  io.mem.MemSbId := io.cache.resp.bits.tag
-  io.mem.MemSyncEnd := io.cache.resp.valid
+  val vectorDone = resp_hold(io.cache.resp.bits.tag).last
+  io.mem.MemSbId := resp_hold(io.cache.resp.bits.tag).sbId
+  io.mem.MemSyncEnd := io.cache.resp.valid && vectorDone
 
   // Parts of the load_seq_id / memSeqId
   val seqSbId = WireInit(0.U(5.W)) // 5
