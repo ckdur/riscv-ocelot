@@ -443,7 +443,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
 
   io.cache.req.bits.addr := Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W))
   // io.cache.req.bits.idx
-  io.cache.req.bits.tag := vGenHold.sbId ## vIdGen.io.outID  // NOTE: This one helps to keep it unique
+  io.cache.req.bits.tag := /*vGenHold.sbId ## */vIdGen.io.outID  // NOTE: This one helps to keep it unique, and the sbId is ignored
   io.cache.req.bits.cmd := vGenHold.cmd.ctrl.mem_cmd
   io.cache.req.bits.size := Mux(vGenHold.is_load, addrBreak.U, vAGen.io.memSizeOut) // TODO: Possibly wrong
   io.cache.req.bits.signed := false.B
@@ -464,8 +464,9 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     val last = Bool()
     val isFake = Bool()
     val isMask = Bool()
+    val sbId = UInt(5.W)
   }
-  val resp_hold = Reg(Vec(1 << io.cache.req.bits.tag.getWidth, new RespHoldData))
+  val resp_hold = Reg(Vec(1 << coreParams.dcacheReqTagBits, new RespHoldData))
   when(io.cache.req.fire) {
     resp_hold(io.cache.req.bits.tag).last := vAGen.io.last
     resp_hold(io.cache.req.bits.tag).elemID := vIdGen.io.outID
@@ -475,6 +476,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     resp_hold(io.cache.req.bits.tag).strideDir := vGenHold.strideDir
     resp_hold(io.cache.req.bits.tag).isFake := vAGen.io.isFake
     resp_hold(io.cache.req.bits.tag).isMask := vAGen.io.isMaskOut
+    resp_hold(io.cache.req.bits.tag).sbId := vGenHold.sbId
   }
   // io.cache.req.bits.no_alloc
   // io.cache.req.bits.no_xcpt
@@ -522,7 +524,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
 
   when(LSUReturnLoadValid) {
     io.mem.MemLoadData := LSUReturnData
-    seqSbId := io.cache.resp.bits.tag
+    seqSbId := resp_hold(io.cache.resp.bits.tag).sbId
     seqElCount := resp_hold(io.cache.resp.bits.tag).elemCount
     seqElOff := resp_hold(io.cache.resp.bits.tag).elemOffset
     seqElId := Cat(0.U(3.W), resp_hold(io.cache.resp.bits.tag).elemID)
