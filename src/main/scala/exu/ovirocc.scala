@@ -107,7 +107,8 @@ class VMemLSQBundle(implicit p: Parameters) extends CoreBundle()(p) with VMemLSQ
   val MemMaskIdxCredit = Output(Bool())
 }
 
-class VecCtrlSigs(implicit p: Parameters) extends CoreBundle()(p) {
+class VecCtrlSigs(implicit p: Parameters) extends CoreBundle()(p)
+  with freechips.rocketchip.rocket.constants.MemoryOpConstants {
   // This is a bundle to decode some additional traits from the instruction that do not communicate the rocket/rocc
   // Actual decode
   val mem_cmd  = UInt(freechips.rocketchip.rocket.M_SZ.W)
@@ -128,9 +129,8 @@ class VecCtrlSigs(implicit p: Parameters) extends CoreBundle()(p) {
   val instMaskEnable = Bool()
   val instVldDest = UInt(5.W)
 
-  def is_load = mem_cmd === M_XRD
-
-  def is_store = mem_cmd === M_XWR
+  val is_load = Bool()
+  val is_store = Bool()
 
   def initialSliceState(vsew: UInt): UInt = {
     // Little decoder that depends on vsew to get the initial SliceSize
@@ -153,12 +153,11 @@ class VecCtrlSigs(implicit p: Parameters) extends CoreBundle()(p) {
     initialSliceSize
   }
 
-  def default: List[BitPat] = List(M_X)
-
-  def decode(inst: UInt, table: Iterable[(BitPat, List[BitPat])]) = {
-    val decoder = DecodeLogic(inst, default, table)
-    val sigs = Seq(mem_cmd)
-    sigs zip decoder foreach { case (s, d) => s := d }
+  def decode(inst: UInt) = {
+    val instop =      inst(6, 0)
+    is_load :=        instop === 7.U
+    is_store :=       instop === 39.U
+    mem_cmd :=        Mux(is_load, M_XRD, M_XWR)
     mem_size :=       inst(13, 12)
     instNf :=         inst(31, 29)
     instElemSize :=   inst(14, 12)
@@ -166,8 +165,8 @@ class VecCtrlSigs(implicit p: Parameters) extends CoreBundle()(p) {
     instVldDest :=    inst(11, 7)
 
     // Not in the decode table, so deduced from here
-    val instMop = inst(27, 26)
-    val instUMop = inst(24, 20)
+    val instMop =   inst(27, 26)
+    val instUMop =  inst(24, 20)
     isWholeStore := is_store && isWhole
     isWholeLoad :=  is_load  && isWhole
     isStoreMask :=  is_store && isMask
@@ -187,45 +186,6 @@ class EnhancedCmdReq(implicit p: Parameters) extends Bundle {
   val fcsr_rm = UInt(3.W)
   val req = new RoCCCommand
   val ctrl = new VecCtrlSigs
-}
-
-class VecCtrlDecode(implicit val p: Parameters) extends DecodeConstants {
-   val table: Array[(BitPat, List[BitPat])] = Array(
-     /*
-     *
-     val isWholeStore = instOP === 39.U && instUMop === 8.U && instMop === 0.U
-     val isWholeLoad = instOP === 7.U && instUMop === 8.U && instMop === 0.U
-     val isStoreMask = instOP === 39.U && instUMop === 11.U && instMop === 0.U
-     val isLoadMask = instOP === 7.U && instUMop === 11.U && instMop === 0.U
-     val isIndex = instMop === 1.U || instMop === 3.U
-     val isUnit = instMop === 0.U
-     * */
-    // Load/Store Opcodes
-    V_VL8->             List(M_XRD),
-    V_VL16->            List(M_XRD),
-    V_VL32->            List(M_XRD),
-    V_VL64->            List(M_XRD),
-    V_VLX8->            List(M_XRD),
-    V_VLX16->           List(M_XRD),
-    V_VLX32->           List(M_XRD),
-    V_VLX64->           List(M_XRD),
-    V_VLS8->            List(M_XRD),
-    V_VLS16->           List(M_XRD),
-    V_VLS32->           List(M_XRD),
-    V_VLS64->           List(M_XRD),
-    V_VS8->             List(M_XWR),
-    V_VS16->            List(M_XWR),
-    V_VS32->            List(M_XWR),
-    V_VS64->            List(M_XWR),
-    V_VSX8->            List(M_XWR),
-    V_VSX16->           List(M_XWR),
-    V_VSX32->           List(M_XWR),
-    V_VSX64->           List(M_XWR),
-    V_VSS8->            List(M_XWR),
-    V_VSS16->           List(M_XWR),
-    V_VSS32->           List(M_XWR),
-    V_VSS64->           List(M_XWR)
-  )
 }
 
 class OviAndVConfigRouter(implicit p: Parameters) extends CoreModule()(p) {
@@ -288,7 +248,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   val vLSIQueue = Module(new Queue(new EnhancedCmdReq, vlsiQDepth))
   val sbIdQueue = Module(new Queue(UInt(sbIdWidth.W), vlsiQDepth))
 
-  val req_ctrl = Wire(new VecCtrlSigs()).decode(io.cmd.bits.inst.asUInt, (new VecCtrlDecode).table)
+  val req_ctrl = Wire(new VecCtrlSigs()).decode(io.cmd.bits.inst.asUInt)
   when(io.cmd.fire && (req_ctrl.is_store || req_ctrl.is_load)) {
     vLSIQueue.io.enq.valid := true.B
     vLSIQueue.io.enq.bits.req := io.cmd.bits
@@ -409,7 +369,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   val vGenHold = RegInit(0.U.asTypeOf(new vGenHoldData))
 
   // Instruction Decoding
-  val vLSIQueueinst = Wire(new VecCtrlSigs()).decode(vLSIQueue.io.deq.bits.req.inst.asUInt, (new VecCtrlDecode).table)
+  val vLSIQueueinst = Wire(new VecCtrlSigs()).decode(vLSIQueue.io.deq.bits.req.inst.asUInt)
   val vMemSize = Mux(vLSIQueueinst.isIndex, // The actual mem_size
     vLSIQueue.io.deq.bits.vconfig.vtype.vsew,
     vLSIQueue.io.deq.bits.ctrl.mem_size)
@@ -472,9 +432,10 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   fakeLoadReturnQueue.io.deq.ready := false.B
 
   // Get the current mask aligned to core
+  val addrlsb = WireInit(vAGen.io.outAddr(addrBreak-1, 0))
   val nummaskelem = oviMaskWidth/coreDataBytes
   val currentmasks = WireInit(VecInit(Seq.tabulate(nummaskelem)(i => vAGen.io.currentMaskOut((i+1) * nummaskelem - 1, i * nummaskelem))))
-  val currentmask = currentmasks(vAGen.io.outAddr(addrBreak-1, 0))
+  val currentmask = currentmasks(addrlsb)
 
   // Output to LSU
   val write_legal = !vGenHold.is_load && ((!vGenHold.vlIsZero && vDBAvail) || vGenHold.vlIsZero)
@@ -482,7 +443,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
 
   io.cache.req.bits.addr := Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W))
   // io.cache.req.bits.idx
-  io.cache.req.bits.tag := vGenHold.sbId
+  io.cache.req.bits.tag := vGenHold.sbId ## vIdGen.io.outID  // NOTE: This one helps to keep it unique
   io.cache.req.bits.cmd := vGenHold.cmd.ctrl.mem_cmd
   io.cache.req.bits.size := Mux(vGenHold.is_load, addrBreak.U, vAGen.io.memSizeOut) // TODO: Possibly wrong
   io.cache.req.bits.signed := false.B
@@ -504,7 +465,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     val isFake = Bool()
     val isMask = Bool()
   }
-  val resp_hold = Reg(Vec(sbCreditSpace, new RespHoldData))
+  val resp_hold = Reg(Vec(1 << io.cache.req.bits.tag.getWidth, new RespHoldData))
   when(io.cache.req.fire) {
     resp_hold(io.cache.req.bits.tag).last := vAGen.io.last
     resp_hold(io.cache.req.bits.tag).elemID := vIdGen.io.outID
