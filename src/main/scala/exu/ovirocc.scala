@@ -397,12 +397,16 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   io.cache.req.valid := false.B
   io.cache.req.bits := DontCare
 
-  val vGenEnable = RegInit(false.B)       // need to send vGenIO request
-  val vGenHold = Reg(new EnhancedCmdReq)  // holding the microOp from vLSIQueue
-  val sbIdHold = RegInit(0.U)             // holding the sbId from sbIdQueue(vLSIQueue)
-  val s0l1 = RegInit(false.B)             // holding wheter it is store or load
-  val strideDirHold = RegInit(true.B)     // holding the direction of the stride, only useful for strided
-  val vlIsZero = RegInit(false.B)
+  val vGenEnable = RegInit(false.B) // need to send vGenIO request
+  class vGenHoldData extends Bundle {
+    val cmd = new EnhancedCmdReq            // holding the cmd from vLSIQueue
+    val sbId = UInt(sbIdWidth.W)            // holding the sbId from sbIdQueue(vLSIQueue)
+    val is_load = Bool()                     // holding wheter it is store or load
+    val strideDir = Bool()                  // holding the direction of the stride, only useful for strided
+    val vlIsZero = Bool()
+  }
+  // NOTE: strideDirHold was true in RegInit, maybe this is impactful
+  val vGenHold = RegInit(0.U.asTypeOf(new vGenHoldData))
 
   // Instruction Decoding
   val vLSIQueueinst = Wire(new VecCtrlSigs()).decode(vLSIQueue.io.deq.bits.req.inst.asUInt, (new VecCtrlDecode).table)
@@ -414,11 +418,11 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   when(vLSIQueue.io.deq.fire && !vGenEnable) {
     // Holding the transaction
     vGenEnable := true.B
-    vGenHold := vLSIQueue.io.deq.bits                             // Hold the transaction
-    vGenHold.ctrl.mem_size := vMemSize                            // ... but change the mem size
-    sbIdHold := sbIdQueue.io.deq.bits                             // Hold the sbId
-    vlIsZero := vLSIQueue.io.deq.bits.vconfig.vl === 0.U && !vLSIQueueinst.isWhole
-    s0l1 := vLSIQueue.io.deq.bits.ctrl.is_load                    // Store the isload or isstore
+    vGenHold.cmd := vLSIQueue.io.deq.bits       // Hold the transaction
+    vGenHold.cmd.ctrl.mem_size := vMemSize      // ... but change the mem size
+    vGenHold.sbId := sbIdQueue.io.deq.bits      // Hold the sbId
+    vGenHold.vlIsZero := vLSIQueue.io.deq.bits.vconfig.vl === 0.U && !vLSIQueueinst.isWhole
+    vGenHold.is_load := vLSIQueue.io.deq.bits.ctrl.is_load  // Store the isload or isstore
 
     // VDB
     vdb.io.configValid := vLSIQueue.io.deq.bits.ctrl.is_store     // only use vdb when it is store
@@ -452,37 +456,65 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     vAGen.io.initialSliceSize := vLSIQueueinst.initialSliceState(vLSIQueue.io.deq.bits.vconfig.vtype.vsew)
 
     // check unit stride / strided / index
-    strideDirHold := 0.U
+    vGenHold.strideDir := false.B
     vAGen.io.isUnit := vLSIQueueinst.isUnit
     vAGen.io.isStride := vLSIQueueinst.isStride
     vAGen.io.isIndex := vLSIQueueinst.isIndex
     when(vLSIQueueinst.isStride) {
-      strideDirHold := vLSIQueue.io.deq.bits.req.rs2(31)
+      vGenHold.strideDir := vLSIQueue.io.deq.bits.req.rs2(31)
     }
   }
 
   // Fake load response for masked-off elements
   val fakeLoadReturnQueue = Module(new Queue(UInt(memSeqIdWidth.W), fakeLoadDepth))
-  fakeLoadReturnQueue.io.enq.valid := s0l1 && (vAGen.io.popForce || vAGen.io.popForceLast)
-  fakeLoadReturnQueue.io.enq.bits := Cat(sbIdHold, vAGen.io.elemCount, vAGen.io.elemOffset, 0.U((11 - log2Ceil(byteVreg + 1)).W), vIdGen.io.outID, vIdGen.io.outVD)
+  fakeLoadReturnQueue.io.enq.valid := vGenHold.is_load && (vAGen.io.popForce || vAGen.io.popForceLast)
+  fakeLoadReturnQueue.io.enq.bits := Cat(vGenHold.sbId, vAGen.io.elemCount, vAGen.io.elemOffset, 0.U((11 - log2Ceil(byteVreg + 1)).W), vIdGen.io.outID, vIdGen.io.outVD)
   fakeLoadReturnQueue.io.deq.ready := false.B
 
-  // Output to LSU
-  io.cache.req.valid := vGenEnable && ((!s0l1 && ((!vlIsZero && vDBAvail) || vlIsZero)) || s0l1) && vAGen.io.canPop
+  // Get the current mask aligned to core
+  val nummaskelem = oviMaskWidth/coreDataBytes
+  val currentmasks = WireInit(VecInit(Seq.tabulate(nummaskelem)(i => vAGen.io.currentMaskOut((i+1) * nummaskelem - 1, i * nummaskelem))))
+  val currentmask = currentmasks(vAGen.io.outAddr(addrBreak-1, 0))
 
-  io.cache.req.bits.addr := Mux(s0l1,
-    Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W)), // Address when load
-    vAGen.io.outAddr)                                       // Address when store
+  // Output to LSU
+  val write_legal = !vGenHold.is_load && ((!vGenHold.vlIsZero && vDBAvail) || vGenHold.vlIsZero)
+  io.cache.req.valid := vGenEnable && (write_legal || vGenHold.is_load) && vAGen.io.canPop
+
+  io.cache.req.bits.addr := Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W))
   // io.cache.req.bits.idx
-  io.cache.req.bits.tag := sbIdHold
-  io.cache.req.bits.cmd := vGenHold.ctrl.mem_cmd
-  io.cache.req.bits.size := Mux(s0l1, addrBreak.U, vAGen.io.memSizeOut) // TODO: Possibly wrong
+  io.cache.req.bits.tag := vGenHold.sbId
+  io.cache.req.bits.cmd := vGenHold.cmd.ctrl.mem_cmd
+  io.cache.req.bits.size := Mux(vGenHold.is_load, addrBreak.U, vAGen.io.memSizeOut) // TODO: Possibly wrong
   io.cache.req.bits.signed := false.B
-  io.cache.req.bits.dprv := vGenHold.req.status.dprv
-  io.cache.req.bits.dv := vGenHold.req.status.dv
-  io.cache.req.bits.data := Mux(s0l1, 0.U, vdb.io.outData) // NOTE: We do not necesarly need this mux
-  io.cache.req.bits.mask := vAGen.io.currentMaskOut  // TODO: This is highly wrong
+  io.cache.req.bits.dprv := vGenHold.cmd.req.status.dprv
+  io.cache.req.bits.dv := vGenHold.cmd.req.status.dv
+  io.cache.req.bits.data := Mux(vGenHold.is_load, 0.U, vdb.io.outData) // NOTE: We do not necesarly need this mux
+  io.cache.req.bits.mask := currentmask
   io.cache.req.bits.phys := false.B
+
+  // Holding the extra bits response that were supposed to be returned by the LSU
+  class RespHoldData extends Bundle {
+    // These were supposed to be returned back by the LSU, but here we are holding them
+    val elemCount = UInt(7.W)
+    val elemOffset = UInt(6.W)
+    val elemID = UInt(11.W)
+    val vRegID = UInt(5.W)
+    val strideDir = Bool()
+    val last = Bool()
+    val isFake = Bool()
+    val isMask = Bool()
+  }
+  val resp_hold = Reg(Vec(sbCreditSpace, new RespHoldData))
+  when(io.cache.req.fire) {
+    resp_hold(io.cache.req.bits.tag).last := vAGen.io.last
+    resp_hold(io.cache.req.bits.tag).elemID := vIdGen.io.outID
+    resp_hold(io.cache.req.bits.tag).elemOffset := vAGen.io.elemOffset
+    resp_hold(io.cache.req.bits.tag).elemCount := vAGen.io.elemCount
+    resp_hold(io.cache.req.bits.tag).vRegID := vIdGen.io.outVD
+    resp_hold(io.cache.req.bits.tag).strideDir := vGenHold.strideDir
+    resp_hold(io.cache.req.bits.tag).isFake := vAGen.io.isFake
+    resp_hold(io.cache.req.bits.tag).isMask := vAGen.io.isMaskOut
+  }
   // io.cache.req.bits.no_alloc
   // io.cache.req.bits.no_xcpt
   /* NOTES about vAGen.io.currentMaskOut
@@ -491,24 +523,14 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   * note however that the masks only comes whenever is a masked instruction
   * */
 
-  // TODO: Not connected bits are here
-  //io.vGenIO.req.bits.last := vAGen.io.last
-  //io.vGenIO.reqHelp.bits.elemID := vIdGen.io.outID
-  //io.vGenIO.reqHelp.bits.elemOffset := vAGen.io.elemOffset
-  //io.vGenIO.reqHelp.bits.elemCount := vAGen.io.elemCount
-  //io.vGenIO.reqHelp.bits.vRegID := vIdGen.io.outVD
-  //io.vGenIO.reqHelp.bits.strideDir := strideDirHold
-  //io.vGenIO.reqHelp.bits.isMask := vAGen.io.isMaskOut
-  //io.vGenIO.reqHelp.bits.isFake := vAGen.io.isFake
-
   // FSM for V-helper
   when(io.cache.req.fire || vAGen.io.popForce) {
-    vdb.io.pop := io.cache.req.bits.cmd === M_XWR && !vlIsZero
+    vdb.io.pop := io.cache.req.bits.cmd === M_XWR && !vGenHold.vlIsZero
     vAGen.io.pop := true.B
-    vIdGen.io.pop := io.cache.req.bits.cmd === M_XRD && !vlIsZero
+    vIdGen.io.pop := io.cache.req.bits.cmd === M_XRD && !vGenHold.vlIsZero
     when(vAGen.io.last) {
       vGenEnable := false.B
-      vdb.io.last := io.cache.req.bits.cmd === M_XWR && !vlIsZero
+      vdb.io.last := io.cache.req.bits.cmd === M_XWR && !vGenHold.vlIsZero
       canStartAnother := true.B
     }
   }
@@ -518,31 +540,15 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   val LSUReturnLoadValid = WireInit(false.B)
   LSUReturnLoadValid := io.cache.resp.valid && io.cache.resp.bits.cmd === M_XRD // needs fixing later if we are overlapping
   val LSUReturnData = WireInit(0.U(oviWidth.W))
-  when(strideDirHold) { // negative // TODO: This is assigned to the hold version of strideDir, but this is wrong
+  when(resp_hold(io.cache.resp.bits.tag).strideDir) { // negative
     LSUReturnData := Cat(io.cache.resp.bits.data((lsuDmemWidth - 1), 0), 0.U((oviWidth - lsuDmemWidth).W))
   }.otherwise {
     LSUReturnData := Cat(0.U, io.cache.resp.bits.data((lsuDmemWidth - 1), 0))
   }
 
   // Data back to VPU
-  io.mem.MemSbId := 0.U
-  val MemSb = RegInit(0.U(memSbSpace.W))
-  val MemSbResidue = WireInit(false.B)
-  /*
-  when(!io.cache.resp.bits.vectorDoneLd && io.cache.resp.bits.vectorDoneSt) {
-    io.mem.MemSbId := io.cache.resp.bits.sbIdDoneSt
-  }.elsewhen(io.cache.resp.bits.vectorDoneLd && !io.cache.resp.bits.vectorDoneSt) {
-    io.mem.MemSbId := io.cache.resp.bits.sbIdDoneLd
-  }.elsewhen(io.cache.resp.bits.vectorDoneLd && io.cache.resp.bits.vectorDoneSt {
-    io.mem.MemSbId := io.cache.resp.bits.sbIdDoneLd
-    MemSb := MemSb.bitSet(io.cache.resp.bits.sbIdDoneSt, true.B)
-  }.elsewhen(MemSb =/= 0.U) {*/
-    MemSbResidue := false.B // TODO: It was true
-    io.mem.MemSbId := PriorityEncoder(MemSb)
-    MemSb := MemSb.bitSet(io.mem.MemSbId, false.B)
-  //}
-  io.mem.MemSyncEnd := (/*io.cache.resp.bits.vectorDone &&*/ io.cache.resp.valid) || MemSbResidue
-
+  io.mem.MemSbId := io.cache.resp.bits.tag
+  io.mem.MemSyncEnd := io.cache.resp.valid
 
   // Parts of the load_seq_id / memSeqId
   val seqSbId = WireInit(0.U(5.W)) // 5
@@ -556,13 +562,13 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
   when(LSUReturnLoadValid) {
     io.mem.MemLoadData := LSUReturnData
     seqSbId := io.cache.resp.bits.tag
-    seqElCount := 0.U // TODO: io.vGenIO.resp.bits.elemCount
-    seqElOff := 0.U // TODO: io.vGenIO.resp.bits.elemOffset
-    seqElId := 0.U // TODO: Cat(0.U(3.W), io.vGenIO.resp.bits.elemID)
-    seqVreg := 0.U // TODO: io.vGenIO.resp.bits.vRegID
+    seqElCount := resp_hold(io.cache.resp.bits.tag).elemCount
+    seqElOff := resp_hold(io.cache.resp.bits.tag).elemOffset
+    seqElId := Cat(0.U(3.W), resp_hold(io.cache.resp.bits.tag).elemID)
+    seqVreg := resp_hold(io.cache.resp.bits.tag).vRegID
 
-    io.mem.MemReturnMaskValid := io.cache.resp.bits.mask.orR // io.cache.resp.bits.isMask
-    io.mem.MemReturnMask := io.cache.resp.bits.mask
+    io.mem.MemReturnMaskValid := resp_hold(io.cache.resp.bits.tag).isMask
+    io.mem.MemReturnMask := io.cache.resp.bits.mask << io.cache.resp.bits.addr(addrBreak-1, 0)
   }.elsewhen(fakeLoadReturnQueue.io.deq.valid) {
     io.mem.MemLoadData := 0.U
     seqSbId := fakeLoadReturnQueue.io.deq.bits(33, 29)
@@ -571,7 +577,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     seqElId := fakeLoadReturnQueue.io.deq.bits(15, 5)
     seqVreg := fakeLoadReturnQueue.io.deq.bits(4, 0)
     io.mem.MemReturnMaskValid := true.B
-    io.mem.MemReturnMask := false.B
+    io.mem.MemReturnMask := 0.B
     fakeLoadReturnQueue.io.deq.ready := true.B
   }
 
