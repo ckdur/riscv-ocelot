@@ -502,7 +502,7 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
     when(vAGen.io.last) {
       vGenEnable := false.B
       vdb.io.last := io.cache.req.bits.cmd === M_XWR && !vGenHold.vlIsZero
-      canStartAnother := true.B
+      //canStartAnother := true.B // NOTE: The logic for another transaction needs to be handled by the response.
     }
   }
 
@@ -519,8 +519,13 @@ class OviLsuWrapper(implicit p: Parameters) extends CoreModule with VMemLSQConst
 
   // Data back to VPU
   val vectorDone = resp_hold(io.cache.resp.bits.tag).last
+  val vectorEnd = RegNext(io.cache.resp.valid && vectorDone)
   io.mem.MemSbId := resp_hold(io.cache.resp.bits.tag).sbId
-  io.mem.MemSyncEnd := io.cache.resp.valid && vectorDone
+  io.mem.MemSyncEnd := vectorEnd
+  // NOTE: This is for delaying the start of another transaction.
+  when(vectorEnd) {
+    canStartAnother := true.B
+  }
 
   // Parts of the load_seq_id / memSeqId
   val seqSbId = WireInit(0.U(5.W)) // 5
@@ -600,7 +605,8 @@ class OviRoccWrapper(implicit p: Parameters) extends CoreModule with VMemLSQCons
   val issue_valid = Wire(UInt())
   issue_credit_cnt := issue_credit_cnt + issue_credit - issue_valid
   val vpu_ready = issue_credit_cnt =/= 0.U
-  cmd.ready := vpu_ready
+  // cmd.ready := vpu_ready
+  cmd.ready := !sb_valid.reduce( _ || _ )
 
   // Response to the writeback
   // TODO: This function should't come from here. This should come from the decoder in Rocket
