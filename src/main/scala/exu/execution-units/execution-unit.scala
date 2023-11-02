@@ -207,14 +207,13 @@ class ALUExeUnit(
   hasDiv         : Boolean = false,
   hasIfpu        : Boolean = false,
   hasMem         : Boolean = false,
-  hasRocc        : Boolean = false,
-  hasVecExe      : Boolean = false)
+  hasRocc        : Boolean = false)
   (implicit p: Parameters)
   extends ExecutionUnit(
     readsIrf         = true,
-    writesIrf        = hasAlu || hasMul || hasDiv || hasVecExe,
+    writesIrf        = hasAlu || hasMul || hasDiv,
     writesLlIrf      = hasMem || hasRocc,
-    writesLlFrf      = (hasIfpu || hasMem || hasVecExe) && p(tile.TileKey).core.fpu != None,
+    writesLlFrf      = (hasIfpu || hasMem) && p(tile.TileKey).core.fpu != None,
     numBypassStages  =
       if (hasAlu && hasMul) 3 //TODO XXX p(tile.TileKey).core.imulLatency
       else if (hasAlu) 1 else 0,
@@ -228,7 +227,7 @@ class ALUExeUnit(
     hasDiv           = hasDiv,
     hasIfpu          = hasIfpu,
     hasMem           = hasMem,
-    hasVecExe        = hasVecExe,
+    hasVecExe        = false,
     hasRocc          = hasRocc)
   with freechips.rocketchip.rocket.constants.MemoryOpConstants
   with tile.HasFPUParameters
@@ -266,8 +265,7 @@ class ALUExeUnit(
                  Mux(hasCSR.B, FU_CSR, 0.U) |
                  Mux(hasJmpUnit.B, FU_JMP, 0.U) |
                  Mux(!ifpu_busy && hasIfpu.B, FU_I2F, 0.U) |
-                 Mux(hasMem.B, FU_MEM, 0.U) |
-                 Mux(!vec_busy && hasVecExe.B, FU_VEC, 0.U)
+                 Mux(hasMem.B, FU_MEM, 0.U)
 
   // ALU Unit -------------------------------
   var alu: ALUUnit = null
@@ -406,28 +404,6 @@ class ALUExeUnit(
     if (usingFPU) {
       io.ll_fresp <> io.lsu_io.fresp
     }
-  }
-
-  // Vector Execution Unit --------------------------
-  var vecexe: VecExeUnit = null
-  if (hasVecExe) {
-    val vecexe = Module(new VecFuncUnit(dataWidth))
-    vecexe.io.fcsr_rm           := io.fcsr_rm
-    vecexe.io.req               <> io.req
-    vecexe.io.req.valid         := io.req.valid && io.req.bits.uop.fu_code_is(FU_VEC)
-    vecexe.io.req.bits.rs3_data := ieee(io.req.bits.rs3_data) // FP
-    vecexe.io.resp.ready        := DontCare
-    vecexe.io.ovi               <> io.ovi
-    vecexe.io.brupdate          <> io.brupdate
-
-    vec_busy     := !vecexe.io.req.ready
-
-    iresp_fu_units += vecexe
-
-    io.ll_fresp.valid       := vecexe.io.resp.valid && (vecexe.io.resp.bits.uop.dst_rtype === RT_FLT)
-    io.ll_fresp.bits.uop    := vecexe.io.resp.bits.uop
-    io.ll_fresp.bits.data   := vecexe.io.resp.bits.data
-    io.ll_fresp.bits.fflags := DontCare
   }
 
   // Outputs (Write Port #0)  ---------------

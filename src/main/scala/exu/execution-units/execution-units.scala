@@ -132,7 +132,7 @@ class ExecutionUnits(val fpu: Boolean, val vec: Boolean)(implicit val p: Paramet
     }
 
     if (vec) {
-      val vecExeUnit = Module(new VecExeUnit())
+      val vecExeUnit = if(fpu) Module(new VecExeUnitWithFPU) else Module(new VecExeUnit)
       exe_units += vecExeUnit
     }
   } else {

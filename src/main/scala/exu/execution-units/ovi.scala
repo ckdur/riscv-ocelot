@@ -179,8 +179,7 @@ class VecExeUnit(implicit p: Parameters)
     numBypassStages  = 0,
     dataWidth        = p(tile.XLen) + 1,
     hasVecExe        = true)
-  with freechips.rocketchip.rocket.constants.MemoryOpConstants
-  with tile.HasFPUParameters {
+  with freechips.rocketchip.rocket.constants.MemoryOpConstants {
 
   val out_str =
     BoomCoreStringPrefix("==ExeUnit==") +
@@ -193,17 +192,12 @@ class VecExeUnit(implicit p: Parameters)
   vecexe.io.fcsr_rm           := io.fcsr_rm
   vecexe.io.req               <> io.req
   vecexe.io.req.valid         := io.req.valid && io.req.bits.uop.fu_code_is(FU_VEC)
-  vecexe.io.req.bits.rs3_data := ieee(io.req.bits.rs3_data) // FP
+  vecexe.io.req.bits.rs3_data := DontCare
   vecexe.io.resp.ready        := DontCare
   vecexe.io.ovi               <> io.ovi
   vecexe.io.brupdate          <> io.brupdate
 
   io.fu_types := Mux(vecexe.io.req.ready && hasVecExe.B, FU_VEC, 0.U)
-
-  io.ll_fresp.valid       := vecexe.io.resp.valid && (vecexe.io.resp.bits.uop.dst_rtype === RT_FLT)
-  io.ll_fresp.bits.uop    := vecexe.io.resp.bits.uop
-  io.ll_fresp.bits.data   := vecexe.io.resp.bits.data
-  io.ll_fresp.bits.fflags := DontCare
 
   // Outputs (Write Port #0)  ---------------
   io.iresp.valid := vecexe.io.resp.valid && vecexe.io.resp.bits.uop.dst_rtype =/= RT_FLT
@@ -212,4 +206,14 @@ class VecExeUnit(implicit p: Parameters)
   io.iresp.bits.predicated := vecexe.io.resp.bits.predicated
   io.iresp.bits.fflags.valid := vecexe.io.resp.bits.fflags.valid
   io.iresp.bits.fflags.bits := vecexe.io.resp.bits.fflags.bits
+}
+
+class VecExeUnitWithFPU(implicit p: Parameters) extends VecExeUnit()(p)
+  with tile.HasFPUParameters {
+  vecexe.io.req.bits.rs3_data := ieee(io.req.bits.rs3_data) // FP
+
+  io.ll_fresp.valid := vecexe.io.resp.valid && (vecexe.io.resp.bits.uop.dst_rtype === RT_FLT)
+  io.ll_fresp.bits.uop := vecexe.io.resp.bits.uop
+  io.ll_fresp.bits.data := vecexe.io.resp.bits.data
+  io.ll_fresp.bits.fflags := DontCare
 }

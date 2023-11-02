@@ -1154,7 +1154,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     pred_bypasses(i) := jmp_unit.io.bypass(i)
   }
 
-  if (usingVector) {
+  if (usingVector && usingFPU) {
     fp_pipeline.io.vec_frf_read_ports.addr := vec_iss_unit.io.iss_uops(0).prs1
     vec_exe_unit.io.req.bits.rs3_data      := RegNext(fp_pipeline.io.vec_frf_read_ports.data)
   }
@@ -1258,7 +1258,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     fp_pipeline.io.ll_wports <> exe_units.memory_units.map(_.io.ll_fresp).toSeq
     }
 
-  if (usingVector) {
+  if (usingVector && usingFPU) {
     // Connect VecExe
     fp_pipeline.io.from_vec                <> exe_units.vec_exe_unit.io.ll_fresp
   }

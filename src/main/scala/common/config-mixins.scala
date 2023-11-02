@@ -105,6 +105,54 @@ class WithVector(coreWidth: Int = 1) extends Config((site, here, up) => {
 })
 
 /**
+ * 1-wide BOOM, little, without FPU.
+ */
+class WithNLittleBooms(n: Int = 1, overrideIdOffset: Option[Int] = None) extends Config(
+  new WithTAGELBPD ++ // Default to TAGE-L BPD
+    new Config((site, here, up) => {
+      case TilesLocated(InSubsystem) => {
+        val prev = up(TilesLocated(InSubsystem), site)
+        val idOffset = overrideIdOffset.getOrElse(prev.size)
+        (0 until n).map { i =>
+          BoomTileAttachParams(
+            tileParams = BoomTileParams(
+              core = BoomCoreParams(
+                fetchWidth = 4,
+                decodeWidth = 1,
+                numRobEntries = 32,
+                issueParams = Seq(
+                  IssueParams(issueWidth=1, numEntries=8, iqType=IQT_MEM.litValue, dispatchWidth=1),
+                  IssueParams(issueWidth=1, numEntries=8, iqType=IQT_INT.litValue, dispatchWidth=1)
+                  //IssueParams(issueWidth=1, numEntries=8, iqType=IQT_FP.litValue , dispatchWidth=1)),
+                ),
+                numIntPhysRegisters = 52,
+                numFpPhysRegisters = 48,
+                numLdqEntries = 8,
+                numStqEntries = 8,
+                maxBrCount = 8,
+                numFetchBufferEntries = 8,
+                ftq = FtqParameters(nEntries=16),
+                nPerfCounters = 2,
+                fpu = None,
+                //fpu = Some(freechips.rocketchip.tile.FPUParams(sfmaLatency=4, dfmaLatency=4, divSqrt=true))
+              ),
+              dcache = Some(
+                DCacheParams(rowBits = 64, nSets=64, nWays=4, nMSHRs=2, nTLBWays=8)
+              ),
+              icache = Some(
+                ICacheParams(rowBits = 64, nSets=64, nWays=4, fetchBytes=2*4)
+              ),
+              hartId = i + idOffset
+            ),
+            crossingParams = RocketCrossingParams()
+          )
+        } ++ prev
+      }
+      case XLen => 64
+    })
+)
+
+/**
  * 1-wide BOOM.
  */
 class WithNSmallBooms(n: Int = 1, overrideIdOffset: Option[Int] = None) extends Config(
