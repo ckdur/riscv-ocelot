@@ -97,7 +97,7 @@ class ExecutionUnits(val fpu: Boolean, val vec: Boolean)(implicit val p: Paramet
   lazy val vec_exe_unit = {
     require (usingVector)
     require (exe_units.count(_.hasVecExe) == 1)
-    exe_units.find(_.hasVecExe).get
+    exe_units.find(_.hasVecExe).get.suggestName("vu_unit")
   }
 
   lazy val rocc_unit = {

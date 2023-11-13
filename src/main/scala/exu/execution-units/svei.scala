@@ -189,6 +189,7 @@ class VecExeUnit(implicit p: Parameters)
 
   // The Functional Units --------------------
   val vecexe = Module(new VecFuncUnit(dataWidth))
+  vecexe.suggestName("vu")
   vecexe.io.fcsr_rm           := io.fcsr_rm
   vecexe.io.req               <> io.req
   vecexe.io.req.valid         := io.req.valid && io.req.bits.uop.fu_code_is(FU_VEC)

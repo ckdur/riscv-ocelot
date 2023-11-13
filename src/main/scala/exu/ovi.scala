@@ -81,7 +81,7 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   io.ovi.set_vl    := vec_config_unit.io.set_vl
   
   // Temporal wire to encapsulate the OVI wrapper io
-  val ovi_wrapper = Wire(new Bundle {
+  val svei = Wire(new Bundle {
     val io = new Bundle {
       val req = new DecoupledIO(new FuncUnitReq(xLen))
       val resp = new DecoupledIO(new FuncUnitResp(xLen))
@@ -92,21 +92,21 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
 
   req_queue.io.deq.nodeq()
   vec_config_unit.io.req.noenq()
-  ovi_wrapper := DontCare
-  ovi_wrapper.io.req.noenq()
+  svei := DontCare
+  svei.io.req.noenq()
 
   val uopc = req_queue.io.deq.bits.uop.uopc
-  ovi_wrapper.io.req     <> req_queue.io.deq
-  when((uopc === uopVSETVL || uopc === uopVSETVLI || uopc === uopVSETIVLI) && !ovi_wrapper.io.resp.valid) {
+  svei.io.req     <> req_queue.io.deq
+  when((uopc === uopVSETVL || uopc === uopVSETVLI || uopc === uopVSETIVLI) && !svei.io.resp.valid) {
     vec_config_unit.io.req <> req_queue.io.deq
   }
 
-  when(ovi_wrapper.io.resp.valid) {
-    io.resp <> ovi_wrapper.io.resp
+  when(svei.io.resp.valid) {
+    io.resp <> svei.io.resp
     vec_config_unit.io.resp.nodeq()
   }.otherwise {
     io.resp <> vec_config_unit.io.resp
-    ovi_wrapper.io.resp.nodeq()
+    svei.io.resp.nodeq()
   }
 
   ////////////////////////////////////////////////////////////////////////////////////
@@ -116,8 +116,8 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   val sb_uop = Reg(Vec(32, new MicroOp()))
   val sb_valid = RegInit(VecInit.fill(32)(false.B))
   val next_sb_id = PriorityEncoder(sb_valid.map(!_))
-  when(ovi_wrapper.io.req.fire) {
-    sb_uop(next_sb_id) := ovi_wrapper.io.req.bits.uop
+  when(svei.io.req.fire) {
+    sb_uop(next_sb_id) := svei.io.req.bits.uop
     sb_valid(next_sb_id) := true.B
   }
 
@@ -125,21 +125,21 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   val resp_uop = sb_uop(vpu.io.completed_sb_id)
   when(resp_valid) { sb_valid(vpu.io.completed_sb_id) := false.B }
 
-  ovi_wrapper.io.resp.valid := resp_valid
-  ovi_wrapper.io.resp.bits.data := vpu.io.completed_dest_reg
-  ovi_wrapper.io.resp.bits.uop := resp_uop
-  ovi_wrapper.io.resp.bits.uop.dst_rtype := Mux(resp_uop.dst_rtype === RT_VEC, RT_X, resp_uop.dst_rtype)
-  ovi_wrapper.io.resp.bits.uop.uses_stq := 0.B // Trick Rob to acknowledge Vector Store
-  ovi_wrapper.io.resp.bits.fflags.valid := vpu.io.completed_valid && vpu.io.completed_fflags.orR
-  ovi_wrapper.io.resp.bits.fflags.bits.uop.rob_idx := ovi_wrapper.io.resp.bits.uop.rob_idx
-  ovi_wrapper.io.resp.bits.fflags.bits.flags := vpu.io.completed_fflags
+  svei.io.resp.valid := resp_valid
+  svei.io.resp.bits.data := vpu.io.completed_dest_reg
+  svei.io.resp.bits.uop := resp_uop
+  svei.io.resp.bits.uop.dst_rtype := Mux(resp_uop.dst_rtype === RT_VEC, RT_X, resp_uop.dst_rtype)
+  svei.io.resp.bits.uop.uses_stq := 0.B // Trick Rob to acknowledge Vector Store
+  svei.io.resp.bits.fflags.valid := vpu.io.completed_valid && vpu.io.completed_fflags.orR
+  svei.io.resp.bits.fflags.bits.uop.rob_idx := svei.io.resp.bits.uop.rob_idx
+  svei.io.resp.bits.fflags.bits.flags := vpu.io.completed_fflags
 
   io.ovi.debug_wb_vec_valid := vpu.io.debug_wb_vec_valid
   io.ovi.debug_wb_vec_wdata := vpu.io.debug_wb_vec_wdata
   io.ovi.debug_wb_vec_wmask := vpu.io.debug_wb_vec_wmask
 
   val issue_credit_cnt = RegInit(MAX_ISSUE_CREDIT.U)
-  issue_credit_cnt := issue_credit_cnt + vpu.io.issue_credit - vpu.io.issue_valid 
+  issue_credit_cnt := issue_credit_cnt + vpu.io.issue_credit - vpu.io.issue_valid
   val vpu_ready = issue_credit_cnt =/= 0.U
 
 /*
@@ -150,10 +150,10 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
 /*
   Input / Output with VPU should be defined here
 */
-  
+
 
    val MemSyncStart = vpu.io.memop_sync_start
-   val MemStoreValid = vpu.io.store_valid 
+   val MemStoreValid = vpu.io.store_valid
    val MemStoreData = vpu.io.store_data
    val MemMaskValid = vpu.io.mask_idx_valid
    val MemMaskId    = Cat(vpu.io.mask_idx_last_idx, vpu.io.mask_idx_item)
@@ -167,7 +167,7 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   val MemReturnMaskValid = WireInit(false.B)
   val MemReturnMask = WireInit(0.U(64.W))
   val MemStoreCredit = WireInit(false.B)
-  val MemMaskCredit = WireInit(false.B) 
+  val MemMaskCredit = WireInit(false.B)
 
   val seqSbId = WireInit(0.U(5.W))    // 5
   val seqElCount = WireInit(1.U(7.W)) // 7
@@ -175,356 +175,6 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   val seqElId = WireInit(0.U(11.W))   // 11
   val seqVreg = WireInit(0.U(5.W))    // 5
 
-/*
-  vLSIQ start
-*/
-
-  // in the middle of handling vector load store
-  val inMiddle = RegInit(false.B)
-  // trying to dequeue VLSIQ 
-  val tryDeqVLSIQ = RegInit(false.B)
-  // this chunk is checking the number of outstanding mem_sync_start
-  val outStandingReq = RegInit(0.U(log2Ceil(outStandingLSCount).W))
-  val canStartAnother = WireInit(false.B)
-  val vOSud = Cat (vpu.io.memop_sync_start, canStartAnother)
-  when (vOSud === 1.U) {
-    outStandingReq := outStandingReq - 1.U
-  }.elsewhen (vOSud === 2.U) {
-    outStandingReq := outStandingReq + 1.U 
-  }
-
-  val vLSIQueue = Module(new Queue(new EnhancedFuncUnitReq(xLen, vLen), vlsiQDepth))
-  val sbIdQueue = Module(new Queue(UInt(5.W), vlsiQDepth))
-
-  // Dequeue a request whenever VPU and vLSIQueue are ready
-  ovi_wrapper.io.req.ready := vpu_ready && vLSIQueue.io.enq.ready
-
-  val req_uop = ovi_wrapper.io.req.bits.uop
-  when(ovi_wrapper.io.req.fire && (req_uop.uses_stq || req_uop.uses_ldq)) {
-    vLSIQueue.io.enq.valid := true.B
-    vLSIQueue.io.enq.bits.req     := ovi_wrapper.io.req.bits
-    vLSIQueue.io.enq.bits.vconfig := io.ovi.vconfig
-    vLSIQueue.io.enq.bits.vxrm    := io.ovi.vxrm
-    vLSIQueue.io.enq.bits.fcsr_rm := io.fcsr_rm
-
-    sbIdQueue.io.enq.enq(next_sb_id)
-  }.otherwise {
-    vLSIQueue.io.enq.noenq()
-    sbIdQueue.io.enq.noenq()
-  }
-
-  // can only dequeue vLSIQueue when it is not in the middle of handling vector load store and
-  // 1. memSyncStart 2. pop out outStanding 3. previously tried
-  vLSIQueue.io.deq.ready := !inMiddle && (outStandingReq =/= 0.U || MemSyncStart || tryDeqVLSIQ)
-  sbIdQueue.io.deq.ready := vLSIQueue.io.deq.ready
-
-  when (!inMiddle) {
-    // success transaction
-    when (vLSIQueue.io.deq.fire) {
-      inMiddle := true.B 
-    // active pop failed
-    }.elsewhen ((outStandingReq =/= 0.U || MemSyncStart) && !vLSIQueue.io.deq.valid) {
-      tryDeqVLSIQ := true.B 
-      inMiddle := true.B 
-    // passive pop successful
-    }.elsewhen (tryDeqVLSIQ && vLSIQueue.io.deq.valid) {
-      tryDeqVLSIQ := false.B
-      inMiddle := true.B 
-    }
-  // finish one vector load stroe
-  }.elsewhen (canStartAnother) {
-    inMiddle := false.B
-  }
-
-  // a new set has dequeued from vLSIQueue
-  val newVGenConfig = vLSIQueue.io.deq.fire
-
-
-/*
-   v-Helper Start
-*/
-
-
-  val vAGen = Module (new VAgen (lsuDmemWidth, 66, vAGenDepth, vpuVlen, oviWidth))
-
-  vAGen.io.configValid := false.B 
-  vAGen.io.maskData := MemMaskId  
-  vAGen.io.maskValid := MemMaskValid  
-  vAGen.io.startAddr := vLSIQueue.io.deq.bits.req.rs1_data 
-  vAGen.io.stride := vLSIQueue.io.deq.bits.req.rs2_data
-  vAGen.io.isUnit := false.B
-  vAGen.io.isStride := false.B 
-  vAGen.io.isIndex := false.B 
-  vAGen.io.isMask := false.B 
-  vAGen.io.isLoad := false.B 
-  vAGen.io.vl := vLSIQueue.io.deq.bits.vconfig.vl
-  vAGen.io.pop := false.B  
-  vAGen.io.initialSliceSize := 0.U
-  vAGen.io.memSize := 0.U
-  MemMaskCredit := vAGen.io.release
-// VDB stuff
-  val vdb = Module (new VDB(oviWidth, lsuDmemWidth, vpuVlen, vdbDepth))
-  
-  vdb.io.writeValid := false.B 
-  vdb.io.pop := false.B 
-  vdb.io.last := false.B  
-  vdb.io.configValid := false.B  
-
-  vdb.io.writeValid := MemStoreValid
-  vdb.io.writeData := MemStoreData
-  vdb.io.sliceSize := vAGen.io.sliceSizeOut 
-  vdb.io.packOveride := vAGen.io.spackOveride
-  vdb.io.packSkipVDB := vAGen.io.packSkipVDB
-  vdb.io.packId := vAGen.io.packVDBId 
-  MemStoreCredit := vdb.io.release
-
-  
-  // make sure that we have enough data
-  val vDBcount = RegInit(0.U(log2Ceil(vdbDepth+1).W))
-  val vDBud = Cat (MemStoreValid, MemStoreCredit)
-  when (vDBud === 1.U) {
-    vDBcount := vDBcount - 1.U
-  }.elsewhen (vDBud === 2.U) {
-    vDBcount := vDBcount + 1.U 
-  }
-  assert (vDBcount <= (vdbDepth).U)
-
-   
-
-val vIdGen = Module (new VIdGen(byteVreg, byteDmem))
- vIdGen.io.configValid := false.B 
- vIdGen.io.startID := 0.U 
- vIdGen.io.startVD := 0.U  
- vIdGen.io.pop := false.B
- vIdGen.io.sliceSize := vAGen.io.sliceSizeOut
- vIdGen.io.packOveride := vAGen.io.packOveride
- vIdGen.io.packSkipVreg := vAGen.io.packSkipVreg
- vIdGen.io.packId := vAGen.io.packId 
-
-
-// extra decoder for whole register / mask
-  val vwhls = Module (new VWhLSDecoder (vpuVlen))
-  vwhls.io.nf := 0.U 
-  vwhls.io.wth := 0.U
-  /*
-      Decode Start
-  */
-
-  io.ovi.vGenIO.req.valid := false.B
-  io.ovi.vGenIO.req.bits := DontCare
-  io.ovi.vGenIO.reqHelp.valid := false.B
-  io.ovi.vGenIO.reqHelp.bits := DontCare
-
-  // need to send vGenIO request
-  val vGenEnable  = RegInit(false.B)
-  // holding the microOp from vLSIQueue
-  val vGenHold = Reg(new EnhancedFuncUnitReq(xLen, vLen))
-  
-  // holding the sbId from sbIdQueue(vLSIQueue)
-  val sbIdHold = RegInit(0.U)
-  // holding wheter it is store or load
-  val s0l1 = RegInit(false.B)
-  // holding the direction of the stride, only useful for strided
-  val strideDirHold = RegInit(true.B)
-  val vlIsZero = RegInit(false.B)
-
-  // Instruction Decoding
-  
-  val instNf = vLSIQueue.io.deq.bits.req.uop.inst(31, 29)
-  val instMop = vLSIQueue.io.deq.bits.req.uop.inst(27, 26)
-  val instMaskEnable = !vLSIQueue.io.deq.bits.req.uop.inst(25)  // 0: enable, 1 disable
-  val instUMop = vLSIQueue.io.deq.bits.req.uop.inst(24, 20)
-  val instElemSize = vLSIQueue.io.deq.bits.req.uop.inst(14, 12)
-  val instVldDest = vLSIQueue.io.deq.bits.req.uop.inst(11, 7)
-  val instOP = vLSIQueue.io.deq.bits.req.uop.inst(6, 0)
-  val isWholeStore = instOP === 39.U && instUMop === 8.U  && instMop === 0.U
-  val isWholeLoad =  instOP === 7.U  && instUMop === 8.U  && instMop === 0.U
-  val isStoreMask =  instOP === 39.U && instUMop === 11.U && instMop === 0.U
-  val isLoadMask =   instOP === 7.U  && instUMop === 11.U && instMop === 0.U
-  val isIndex =                         instMop === 1.U || instMop === 3.U
-  val isUnit =                                             instMop === 0.U 
-
-  // start of a new round of vector load store
-  when (newVGenConfig && !vGenEnable) {
-    vGenEnable := true.B 
-    vGenHold.req.uop := vLSIQueue.io.deq.bits.req.uop
-    // Override mem_size for indexed load/store with sew from vtype
-    vGenHold.req.uop.mem_size := Mux(isIndex, vLSIQueue.io.deq.bits.vconfig.vtype.vsew,
-                                               vLSIQueue.io.deq.bits.req.uop.mem_size)
-    sbIdHold := sbIdQueue.io.deq.bits 
-    vlIsZero := vLSIQueue.io.deq.bits.vconfig.vl === 0.U &&
-               !isWholeLoad &&
-               !isWholeStore
-    s0l1 := vLSIQueue.io.deq.bits.req.uop.uses_ldq    
-    // only use vdb when it is store
-    vdb.io.configValid := vLSIQueue.io.deq.bits.req.uop.uses_stq
-    // only use vID when it is load
-    vIdGen.io.configValid := vLSIQueue.io.deq.bits.req.uop.uses_ldq
-       // vstart = 0 for now
-    vIdGen.io.startID := 0.U
-       // write back V dest
-    vIdGen.io.startVD := instVldDest
-    // vAGen always on
-    vAGen.io.configValid := true.B
-       // default vl    
-    vAGen.io.vl := vLSIQueue.io.deq.bits.vconfig.vl
-       // default base address and stride
-    vAGen.io.startAddr := vLSIQueue.io.deq.bits.req.rs1_data
-    vAGen.io.stride := vLSIQueue.io.deq.bits.req.rs2_data 
-    vAGen.io.isMask := instMaskEnable
-    vAGen.io.memSize := Mux(isIndex, vLSIQueue.io.deq.bits.vconfig.vtype.vsew,
-                                               vLSIQueue.io.deq.bits.req.uop.mem_size)
-    vAGen.io.isLoad := vLSIQueue.io.deq.bits.req.uop.uses_ldq
-    // special case of whole load and whole store
-    when (isWholeLoad || isWholeStore) {
-    vwhls.io.nf := instNf
-    vwhls.io.wth := instElemSize 
-    vAGen.io.vl := vwhls.io.overVl 
-    }.elsewhen (isStoreMask || isLoadMask) {
-      vAGen.io.vl := (vLSIQueue.io.deq.bits.vconfig.vl + 7.U) >> 3
-    }
-    // initial SliceSize    
-    when (isWholeStore || isStoreMask || isLoadMask) {
-      vAGen.io.initialSliceSize := 1.U 
-    }.elsewhen (isIndex) {
-      vAGen.io.initialSliceSize := 1.U << vLSIQueue.io.deq.bits.vconfig.vtype.vsew 
-    }.otherwise {
-      when (instElemSize === 0.U) {
-         vAGen.io.initialSliceSize := 1.U 
-      }.elsewhen (instElemSize === 5.U){
-         vAGen.io.initialSliceSize := 2.U 
-      }.elsewhen (instElemSize === 6.U){
-         vAGen.io.initialSliceSize := 4.U 
-      }.otherwise{
-         vAGen.io.initialSliceSize := 8.U 
-      }
-    }
-    // check unit stride / strided / index
-    strideDirHold := 0.U 
-    when (instMop === 0.U) {
-      vAGen.io.isStride := false.B 
-      vAGen.io.isUnit := true.B 
-    }.elsewhen(instMop === 2.U) {
-      vAGen.io.isStride := true.B 
-      strideDirHold := vLSIQueue.io.deq.bits.req.rs2_data(31)
-    }.otherwise {
-      vAGen.io.isIndex := true.B
-    }
-  }
-
-/*
-   Fake load response for masked-off elements
-*/
-
-  val fakeLoadReturnQueue = Module(new Queue(UInt(34.W), fakeLoadDepth))
-  fakeLoadReturnQueue.io.enq.valid := s0l1 && (vAGen.io.popForce || vAGen.io.popForceLast)
-  fakeLoadReturnQueue.io.enq.bits := Cat(sbIdHold, vAGen.io.elemCount, vAGen.io.elemOffset, 0.U((11 - log2Ceil(byteVreg + 1)).W), vIdGen.io.outID, vIdGen.io.outVD)
-  fakeLoadReturnQueue.io.deq.ready := false.B 
-
-
-
-
-
-  /*
-     Output to LSU
-  */ 
-
-  io.ovi.vGenIO.req.valid := vGenEnable && ((!s0l1 && ((!vlIsZero && vDBcount =/= 0.U) || vlIsZero)) || s0l1) && vAGen.io.canPop
-  io.ovi.vGenIO.req.bits.uop := vGenHold.req.uop
-  io.ovi.vGenIO.req.bits.uop.mem_size := Mux(s0l1, addrBreak.U, vAGen.io.memSizeOut)
-  io.ovi.vGenIO.req.bits.data := Mux(s0l1, 0.U, vdb.io.outData)
-  io.ovi.vGenIO.req.bits.last := vAGen.io.last
-  io.ovi.vGenIO.req.bits.addr := Mux(s0l1, Cat(vAGen.io.outAddr(39, addrBreak), 0.U(addrBreak.W)), vAGen.io.outAddr)
-
-  io.ovi.vGenIO.reqHelp.bits.elemID := vIdGen.io.outID
-  io.ovi.vGenIO.reqHelp.bits.elemOffset := vAGen.io.elemOffset
-  io.ovi.vGenIO.reqHelp.bits.elemCount := vAGen.io.elemCount
-  io.ovi.vGenIO.reqHelp.bits.vRegID := vIdGen.io.outVD
-  io.ovi.vGenIO.reqHelp.bits.sbId   := sbIdHold
-  io.ovi.vGenIO.reqHelp.bits.strideDir := strideDirHold
-  io.ovi.vGenIO.reqHelp.bits.isMask := vAGen.io.isMaskOut
-  io.ovi.vGenIO.reqHelp.bits.Mask := vAGen.io.currentMaskOut
-  io.ovi.vGenIO.reqHelp.bits.isFake := vAGen.io.isFake
-
-/*
-   FSM for V-helper
-*/
-
-  when ((io.ovi.vGenIO.req.valid && io.ovi.vGenIO.req.ready) || vAGen.io.popForce) {
-    vdb.io.pop := io.ovi.vGenIO.req.bits.uop.uses_stq && !vlIsZero
-    vAGen.io.pop := true.B 
-    vIdGen.io.pop := io.ovi.vGenIO.req.bits.uop.uses_ldq && !vlIsZero
-    when (vAGen.io.last) {
-      vGenEnable := false.B         
-      vdb.io.last := io.ovi.vGenIO.req.bits.uop.uses_stq && !vlIsZero
-      canStartAnother := true.B 
-    }
-  }
-
-
-
-/*
-   Parse LSU response
-*/
-  val LSUReturnLoadValid = WireInit(false.B)
-  LSUReturnLoadValid := io.ovi.vGenIO.resp.valid && io.ovi.vGenIO.resp.bits.s0l1  // needs fixing later if we are overlapping
-  val LSUReturnData = WireInit(0.U(oviWidth.W))
-  when (io.ovi.vGenIO.resp.bits.strideDir){  // negative
-       LSUReturnData := Cat(io.ovi.vGenIO.resp.bits.data ((lsuDmemWidth-1), 0), 0.U((oviWidth-lsuDmemWidth).W))
-    }.otherwise {
-      LSUReturnData := Cat(0.U, io.ovi.vGenIO.resp.bits.data ((lsuDmemWidth-1), 0))
-    }
-
-/*
-   Data back to VPU
-*/
-
-MemSbId := 0.U
-val MemSb = RegInit(0.U(32.W))
-val vectorDone = WireInit(0.U(2.W))
-val MemSbResidue = WireInit(false.B)
-vectorDone := Cat (io.ovi.vGenIO.resp.bits.vectorDoneLd, io.ovi.vGenIO.resp.bits.vectorDoneSt)
-when (vectorDone === 1.U) {
-   MemSbId := io.ovi.vGenIO.resp.bits.sbIdDoneSt
-}.elsewhen (vectorDone === 2.U) {
-   MemSbId := io.ovi.vGenIO.resp.bits.sbIdDoneLd
-}.elsewhen (vectorDone === 3.U) {
-   MemSbId := io.ovi.vGenIO.resp.bits.sbIdDoneLd
-   MemSb := MemSb.bitSet (io.ovi.vGenIO.resp.bits.sbIdDoneSt, true.B)
-}.elsewhen (MemSb =/= 0.U) {
-   MemSbResidue := true.B 
-   MemSbId := PriorityEncoder (MemSb)
-   MemSb := MemSb.bitSet (MemSbId, false.B)
-}
-MemSyncEnd := (io.ovi.vGenIO.resp.bits.vectorDone && io.ovi.vGenIO.resp.valid) || MemSbResidue
-
-  
-
-  MemLoadValid := LSUReturnLoadValid || fakeLoadReturnQueue.io.deq.valid
-  MemSeqId := Cat (seqSbId, seqElCount, seqElOff, seqElId, seqVreg) 
-
-  when (LSUReturnLoadValid) {
-    MemLoadData := LSUReturnData    
-    seqSbId := io.ovi.vGenIO.resp.bits.sbId
-    seqElCount := io.ovi.vGenIO.resp.bits.elemCount
-    seqElOff := io.ovi.vGenIO.resp.bits.elemOffset
-    seqElId := Cat(0.U(3.W), io.ovi.vGenIO.resp.bits.elemID)
-    seqVreg := io.ovi.vGenIO.resp.bits.vRegID
-    
-    MemReturnMaskValid := io.ovi.vGenIO.resp.bits.isMask
-    MemReturnMask := io.ovi.vGenIO.resp.bits.Mask
-  }.elsewhen (fakeLoadReturnQueue.io.deq.valid) {    
-    MemLoadData := 0.U     
-    seqSbId := fakeLoadReturnQueue.io.deq.bits (33, 29)
-    seqElCount := fakeLoadReturnQueue.io.deq.bits (28, 22)
-    seqElOff := fakeLoadReturnQueue.io.deq.bits (21, 16)
-    seqElId := fakeLoadReturnQueue.io.deq.bits (15, 5)
-    seqVreg := fakeLoadReturnQueue.io.deq.bits (4, 0)
-    MemReturnMaskValid := true.B 
-    MemReturnMask := false.B 
-    fakeLoadReturnQueue.io.deq.ready := true.B 
-  }
-  
   /*
       OVI LS helper end
   */
@@ -532,16 +182,16 @@ MemSyncEnd := (io.ovi.vGenIO.resp.bits.vectorDone && io.ovi.vGenIO.resp.valid) |
   vpu.io := DontCare
   vpu.io.clk := clock
   vpu.io.reset_n := ~reset.asBool
-  vpu.io.issue_valid := ovi_wrapper.io.req.fire
-  vpu.io.issue_inst := ovi_wrapper.io.req.bits.uop.inst
+  vpu.io.issue_valid := svei.io.req.fire
+  vpu.io.issue_inst := svei.io.req.bits.uop.inst
   vpu.io.issue_sb_id := next_sb_id
   vpu.io.issue_scalar_opnd := Mux(
-    ovi_wrapper.io.req.bits.uop.lrs1_rtype === RT_FLT,
-    ovi_wrapper.io.req.bits.rs3_data,
+    svei.io.req.bits.uop.lrs1_rtype === RT_FLT,
+    svei.io.req.bits.rs3_data,
     Mux(
-      ovi_wrapper.io.req.bits.uop.uses_ldq || ovi_wrapper.io.req.bits.uop.uses_stq,
-      ovi_wrapper.io.req.bits.rs2_data,
-      ovi_wrapper.io.req.bits.rs1_data
+      svei.io.req.bits.uop.uses_ldq || svei.io.req.bits.uop.uses_stq,
+      svei.io.req.bits.rs2_data,
+      svei.io.req.bits.rs1_data
     )
   )
   vpu.io.issue_vcsr := Cat(
@@ -555,7 +205,7 @@ MemSyncEnd := (io.ovi.vGenIO.resp.bits.vectorDone && io.ovi.vGenIO.resp.valid) |
   )
   vpu.io.issue_vcsr_lmulb2 := io.ovi.vconfig.vtype.vlmul_sign
   vpu.io.dispatch_sb_id := next_sb_id
-  vpu.io.dispatch_next_senior := ovi_wrapper.io.req.fire
+  vpu.io.dispatch_next_senior := svei.io.req.fire
   vpu.io.dispatch_kill := 0.B
   
    vpu.io.memop_sync_end := MemSyncEnd
@@ -567,7 +217,7 @@ MemSyncEnd := (io.ovi.vGenIO.resp.bits.vectorDone && io.ovi.vGenIO.resp.valid) |
    vpu.io.load_mask_valid := MemReturnMaskValid
    vpu.io.load_mask := MemReturnMask
    vpu.io.store_credit := MemStoreCredit
-   vpu.io.mask_idx_credit := vAGen.io.release
+   vpu.io.mask_idx_credit := false.B
 }
 
 class tt_vpu_ovi (vLen: Int)(implicit p: Parameters) extends BlackBox(Map("VLEN" -> IntParam(vLen))) with HasBlackBoxResource {
