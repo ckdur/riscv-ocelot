@@ -96,9 +96,8 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   ovi_wrapper.io.req.noenq()
 
   val uopc = req_queue.io.deq.bits.uop.uopc
-  when(uopc === uopVEC) {
-    ovi_wrapper.io.req     <> req_queue.io.deq
-  }.elsewhen((uopc === uopVSETVL || uopc === uopVSETVLI || uopc === uopVSETIVLI) && !ovi_wrapper.io.resp.valid) {
+  ovi_wrapper.io.req     <> req_queue.io.deq
+  when((uopc === uopVSETVL || uopc === uopVSETVLI || uopc === uopVSETIVLI) && !ovi_wrapper.io.resp.valid) {
     vec_config_unit.io.req <> req_queue.io.deq
   }
 
