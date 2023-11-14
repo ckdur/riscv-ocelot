@@ -150,6 +150,7 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   issue_credit_cnt := issue_credit_cnt + vpu.io.issue_credit - vpu.io.issue_valid
   val vpu_ready = issue_credit_cnt =/= 0.U
 
+  svei.io.req.ready := vpu_ready // && vLSIQueue.io.enq.ready
 /*
    OVI LS helper start
 */
