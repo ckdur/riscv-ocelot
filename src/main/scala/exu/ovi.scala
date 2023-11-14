@@ -96,9 +96,17 @@ class VecFuncUnit(dataWidth: Int)(implicit p: Parameters)
   svei.io.req.noenq()
 
   val uopc = req_queue.io.deq.bits.uop.uopc
-  svei.io.req     <> req_queue.io.deq
+  // svei.io.req     <> req_queue.io.deq
+  svei.io.req.valid := req_queue.io.deq.valid
+  svei.io.req.bits := req_queue.io.deq.bits
+  req_queue.io.deq.ready := svei.io.req.ready
   when((uopc === uopVSETVL || uopc === uopVSETVLI || uopc === uopVSETIVLI) && !svei.io.resp.valid) {
-    vec_config_unit.io.req <> req_queue.io.deq
+    svei.io.req.valid := req_queue.io.deq.fire
+    svei.io.req.bits := req_queue.io.deq.bits
+    // vec_config_unit.io.req <> req_queue.io.deq
+    vec_config_unit.io.req.valid := req_queue.io.deq.fire
+    vec_config_unit.io.req.bits := req_queue.io.deq.bits
+    req_queue.io.deq.ready := vec_config_unit.io.req.ready && svei.io.req.ready
   }
 
   when(svei.io.resp.valid) {
