@@ -138,6 +138,7 @@ abstract class ExecutionUnit(
 
     // only used by the vec unit
     val ovi = if (hasVecExe) new OviWrapperCoreIO else null
+    val ovi_exp = if (hasVecExe) Output(new tt_vpu_ovi_bundle(vLen)) else null
 
     // TODO move this out of ExecutionUnit
     val com_exception = if (hasMem || hasRocc) Input(Bool()) else null

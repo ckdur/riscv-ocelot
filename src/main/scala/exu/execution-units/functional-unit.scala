@@ -194,6 +194,7 @@ abstract class FunctionalUnit(
 
     // only used by vector unit
     val ovi = if (isVecExeUnit) new OviWrapperCoreIO else null
+    val ovi_exp = if (isVecExeUnit) Output(new tt_vpu_ovi_bundle(vLen)) else null
   })
 }
 

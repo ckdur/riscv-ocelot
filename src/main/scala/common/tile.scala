@@ -95,6 +95,9 @@ class BoomTile private(
   tlOtherMastersNode := tile_master_blocker.map { _.node := tlMasterXbar.node } getOrElse { tlMasterXbar.node }
   masterNode :=* tlOtherMastersNode
 
+  /*val oviNode = boomParams.core.useVector.option(BundleBridgeSource(() =>
+    Output(new tt_vpu_ovi_bundle(boomParams.core.vLen))))*/
+
   val cpuDevice: SimpleDevice = new SimpleDevice("cpu", Seq("ucb-bar,boom0", "riscv")) {
     override def parent = Some(ResourceAnchors.cpus)
     override def describe(resources: ResourceBindings): Description = {
@@ -247,4 +250,9 @@ class BoomTileModuleImp(outer: BoomTile) extends BaseTileModuleImp(outer){
   override def toString: String = boomTileStr
 
   print(boomTileStr)
+
+  /*outer.oviNode.foreach{ oviNode =>
+    val oviNodePort = oviNode.in.head._1
+    oviNodePort <> core.io.ovi_exp
+  }*/
 }

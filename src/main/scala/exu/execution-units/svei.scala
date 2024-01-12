@@ -207,6 +207,8 @@ class VecExeUnit(implicit p: Parameters)
   io.iresp.bits.predicated := vecexe.io.resp.bits.predicated
   io.iresp.bits.fflags.valid := vecexe.io.resp.bits.fflags.valid
   io.iresp.bits.fflags.bits := vecexe.io.resp.bits.fflags.bits
+
+  io.ovi_exp := vecexe.io.ovi_exp
 }
 
 class VecExeUnitWithFPU(implicit p: Parameters) extends VecExeUnit()(p)

@@ -62,6 +62,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     val ptw_tlb = new freechips.rocketchip.rocket.TLBPTWIO()
     val trace = Output(Vec(coreParams.retireWidth, new TracedInstruction))
     val fcsr_rm = UInt(freechips.rocketchip.tile.FPConstants.RM_SZ.W)
+    val ovi_exp = if(usingVector) Output(new tt_vpu_ovi_bundle(vLen)) else null
   }
   //**********************************
   // construct all of the modules
@@ -1724,6 +1725,10 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     io.trace := DontCare
     io.trace map (t => t.valid := false.B)
     io.ifu.debug_ftq_idx := DontCare
+  }
+
+  if (usingVector) {
+    io.ovi_exp := exe_units.vec_exe_unit.io.ovi_exp
   }
 }
 
